@@ -52,15 +52,25 @@ func (a *AudioProcessor) GetInfo(audioPath string) (*AudioInfo, error) {
 	return info, nil
 }
 
-// ExtractFromVideo extracts audio from a video file
-func (a *AudioProcessor) ExtractFromVideo(videoPath, outputPath string) error {
-	return ExtractAudio(videoPath, outputPath)
-}
-
 // RemoveSilence processes an audio file by removing silent parts
 func (a *AudioProcessor) RemoveSilence(audioPath, outputPath string, silenceConfig SilenceConfig, audioConfig *AudioConfig) error {
 	return RemoveAudioSilence(audioPath, outputPath, silenceConfig.MinSilenceLen, silenceConfig.SilenceThresh,
 		audioConfig, a.ffmpeg.logger)
+}
+
+// ExtractFromVideo extracts audio from a video file
+func (a *AudioProcessor) ExtractFromVideo(videoPath, outputPath string) error {
+	return ExtractAudioFromVideo(videoPath, outputPath)
+}
+
+// ExtractSegment extracts a segment from an audio file
+func (a *AudioProcessor) ExtractSegment(audioPath, outputPath string, startTime, endTime float64, audioInfo *AudioInfo) error {
+	return ExtractAudioSegment(audioPath, outputPath, startTime, endTime, audioInfo)
+}
+
+// ConcatenateSegments concatenates multiple audio segments into a single audio
+func (a *AudioProcessor) ConcatenateSegments(segments []string, outputPath string, audioInfo *AudioInfo) error {
+	return ConcatenateAudioSegments(segments, outputPath, audioInfo)
 }
 
 // VideoProcessor provides video-specific functionality
@@ -88,6 +98,16 @@ func (v *VideoProcessor) GetInfo(videoPath string) (*VideoInfo, error) {
 func (v *VideoProcessor) RemoveSilence(videoPath, outputPath string, silenceConfig SilenceConfig, videoConfig *VideoConfig) error {
 	return RemoveVideoSilence(videoPath, outputPath, silenceConfig.MinSilenceLen, silenceConfig.SilenceThresh,
 		videoConfig, v.ffmpeg.logger)
+}
+
+// ExtractSegment extracts a segment from a video file
+func (v *VideoProcessor) ExtractSegment(videoPath, outputPath string, startTime, endTime float64, videoInfo *VideoInfo) error {
+	return ExtractVideoSegment(videoPath, outputPath, startTime, endTime, videoInfo)
+}
+
+// ConcatenateSegments concatenates multiple video segments into a single video
+func (v *VideoProcessor) ConcatenateSegments(segments []string, outputPath string, videoInfo *VideoInfo) error {
+	return ConcatenateVideoSegments(segments, outputPath, videoInfo)
 }
 
 // Resize resizes a video file according to the specified configuration

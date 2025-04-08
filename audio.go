@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+/*
+* Exported functions
+ */
+
 // GetAudioInfo retrieves information about an audio file
 func GetAudioInfo(audioPath string) (*AudioInfo, error) {
 	// Check if FFprobe is available
@@ -58,109 +62,6 @@ func GetAudioInfo(audioPath string) (*AudioInfo, error) {
 	return info, nil
 }
 
-// GetAudioDuration returns the duration of an audio file
-func GetAudioDuration(audioPath string) (float64, error) {
-	// Check if FFprobe is available
-	_, err := exec.LookPath("ffprobe")
-	if err != nil {
-		return 0, fmt.Errorf("ffprobe not found in PATH: %w", err)
-	}
-
-	// Get audio duration using ffprobe
-	cmd := exec.Command("ffprobe",
-		"-v", "error",
-		"-show_entries", "format=duration",
-		"-of", "default=noprint_wrappers=1:nokey=1",
-		audioPath)
-
-	output, err := cmd.Output()
-	if err != nil {
-		return 0, fmt.Errorf("failed to get audio duration: %w", err)
-	}
-
-	// Parse duration
-	duration, err := strconv.ParseFloat(strings.TrimSpace(string(output)), 64)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse audio duration: %w", err)
-	}
-
-	return duration, nil
-}
-
-// DetectSilence detects silence in an audio file
-func DetectSilence(audioPath string, minSilenceLen int, silenceThresh int) ([]AudioSegment, error) {
-	// Convert ms to seconds for FFmpeg
-	silenceLenSec := float64(minSilenceLen) / 1000.0
-
-	// Use FFmpeg's silencedetect filter to find silence periods
-	cmd := exec.Command("ffmpeg",
-		"-i", audioPath,
-		"-af", fmt.Sprintf("silencedetect=noise=%ddB:d=%.3f", silenceThresh, silenceLenSec),
-		"-f", "null", "-")
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("failed to detect silence: %w - %s", err, string(output))
-	}
-
-	// Extract silence_start and silence_end times
-	silenceStarts, silenceEnds := parseSilenceOutput(string(output))
-
-	// If no silence detected, return empty result
-	if len(silenceStarts) == 0 || len(silenceEnds) == 0 {
-		return []AudioSegment{}, nil
-	}
-
-	// Get total audio duration
-	totalDuration, err := GetAudioDuration(audioPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get audio duration: %w", err)
-	}
-
-	// Create non-silent segments
-	var nonSilentSegments []AudioSegment
-
-	// First segment - from start to first silence
-	if silenceStarts[0] > 0 {
-		nonSilentSegments = append(nonSilentSegments, AudioSegment{
-			StartTime: 0,
-			EndTime:   silenceStarts[0],
-			Duration:  silenceStarts[0],
-		})
-	}
-
-	// Middle segments - between silences
-	for i := 0; i < len(silenceStarts)-1; i++ {
-		segmentStart := silenceEnds[i]
-		segmentEnd := silenceStarts[i+1]
-
-		// Skip very short segments
-		if segmentEnd-segmentStart < 0.5 {
-			continue
-		}
-
-		nonSilentSegments = append(nonSilentSegments, AudioSegment{
-			StartTime: segmentStart,
-			EndTime:   segmentEnd,
-			Duration:  segmentEnd - segmentStart,
-		})
-	}
-
-	// Last segment - from last silence to end
-	if len(silenceEnds) > 0 && silenceEnds[len(silenceEnds)-1] < totalDuration {
-		segmentStart := silenceEnds[len(silenceEnds)-1]
-		segmentEnd := totalDuration
-
-		nonSilentSegments = append(nonSilentSegments, AudioSegment{
-			StartTime: segmentStart,
-			EndTime:   segmentEnd,
-			Duration:  segmentEnd - segmentStart,
-		})
-	}
-
-	return nonSilentSegments, nil
-}
-
 // RemoveAudioSilence processes an audio file by removing silent parts
 func RemoveAudioSilence(audioPath, outputPath string, minSilenceLen int, silenceThresh int, config *AudioConfig, logger Logger) error {
 	// Create temporary directories
@@ -189,7 +90,7 @@ func RemoveAudioSilence(audioPath, outputPath string, minSilenceLen int, silence
 	// Step 2: Detect silence in audio
 	logger.Step("Detecting silence in audio")
 
-	audioSegments, err := DetectSilence(audioPath, minSilenceLen, silenceThresh)
+	audioSegments, err := DetectNonSilentSegments(audioPath, minSilenceLen, silenceThresh)
 	if err != nil {
 		return fmt.Errorf("failed to detect silence: %w", err)
 	}
@@ -372,55 +273,105 @@ func RemoveAudioSilence(audioPath, outputPath string, minSilenceLen int, silence
 	return nil
 }
 
-// parseSilenceOutput parses FFmpeg silence detection output
-func parseSilenceOutput(output string) ([]float64, []float64) {
-	// Extract silence_start times
-	startRegex := regexp.MustCompile(`silence_start: ([0-9.]+)`)
-	startMatches := startRegex.FindAllStringSubmatch(output, -1)
-
-	// Extract silence_end times
-	endRegex := regexp.MustCompile(`silence_end: ([0-9.]+)`)
-	endMatches := endRegex.FindAllStringSubmatch(output, -1)
-
-	// Convert to float arrays
-	var starts, ends []float64
-
-	for _, match := range startMatches {
-		if len(match) > 1 {
-			time, err := strconv.ParseFloat(match[1], 64)
-			if err == nil {
-				starts = append(starts, time)
-			}
-		}
+// Extract audio from a video file and save it to a file
+func ExtractAudioFromVideo(videoPath, outputPath string) error {
+	// Check if FFmpeg is available
+	_, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		return fmt.Errorf("ffmpeg not found in PATH: %w", err)
 	}
 
-	for _, match := range endMatches {
-		if len(match) > 1 {
-			time, err := strconv.ParseFloat(match[1], 64)
-			if err == nil {
-				ends = append(ends, time)
-			}
-		}
-	}
-
-	return starts, ends
-}
-
-// copyAudioFile copies a file from src to dst
-func copyAudioFile(src, dst string) error {
-	// Ensure output directory exists
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+	// Create output directory if it doesn't exist
+	err = os.MkdirAll(filepath.Dir(outputPath), 0755)
+	if err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Use FFmpeg for copying to handle audio files properly
-	cmd := exec.Command("ffmpeg", "-i", src, "-c", "copy", "-y", dst)
+	// Extract audio from video
+	cmd := exec.Command("ffmpeg", "-i", videoPath, "-q:a", "2", "-y", outputPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to copy file: %w - %s", err, string(output))
+		return fmt.Errorf("failed to extract audio: %w - %s", err, string(output))
 	}
 
 	return nil
+}
+
+// DetectNonSilentSegments detects silence in an audio file and returns the non-silent segments
+func DetectNonSilentSegments(audioPath string, minSilenceLen int, silenceThresh int) ([]AudioSegment, error) {
+	// Convert ms to seconds for FFmpeg
+	silenceLenSec := float64(minSilenceLen) / 1000.0
+
+	// Use FFmpeg's silencedetect filter to find silence periods
+	cmd := exec.Command("ffmpeg",
+		"-i", audioPath,
+		"-af", fmt.Sprintf("silencedetect=noise=%ddB:d=%.3f", silenceThresh, silenceLenSec),
+		"-f", "null", "-")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect silence: %w - %s", err, string(output))
+	}
+
+	// Extract silence_start and silence_end times
+	silenceStarts, silenceEnds := parseSilenceOutput(string(output))
+
+	// If no silence detected, return empty result
+	if len(silenceStarts) == 0 || len(silenceEnds) == 0 {
+		return []AudioSegment{}, nil
+	}
+
+	// Get total audio duration
+	audioInfo, err := GetAudioInfo(audioPath)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get audio duration: %w", err)
+	}
+
+	totalDuration := audioInfo.Duration
+
+	// Create non-silent segments
+	var nonSilentSegments []AudioSegment
+
+	// First segment - from start to first silence
+	if silenceStarts[0] > 0 {
+		nonSilentSegments = append(nonSilentSegments, AudioSegment{
+			StartTime: 0,
+			EndTime:   silenceStarts[0],
+			Duration:  silenceStarts[0],
+		})
+	}
+
+	// Middle segments - between silences
+	for i := 0; i < len(silenceStarts)-1; i++ {
+		segmentStart := silenceEnds[i]
+		segmentEnd := silenceStarts[i+1]
+
+		// Skip very short segments
+		if segmentEnd-segmentStart < 0.5 {
+			continue
+		}
+
+		nonSilentSegments = append(nonSilentSegments, AudioSegment{
+			StartTime: segmentStart,
+			EndTime:   segmentEnd,
+			Duration:  segmentEnd - segmentStart,
+		})
+	}
+
+	// Last segment - from last silence to end
+	if len(silenceEnds) > 0 && silenceEnds[len(silenceEnds)-1] < totalDuration {
+		segmentStart := silenceEnds[len(silenceEnds)-1]
+		segmentEnd := totalDuration
+
+		nonSilentSegments = append(nonSilentSegments, AudioSegment{
+			StartTime: segmentStart,
+			EndTime:   segmentEnd,
+			Duration:  segmentEnd - segmentStart,
+		})
+	}
+
+	return nonSilentSegments, nil
 }
 
 // ExtractAudioSegment extracts a segment from an audio file
@@ -467,6 +418,66 @@ func ExtractAudioSegment(inputPath, outputPath string, startTime, endTime float6
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("FFmpeg error: %w - %s", err, string(output))
+	}
+
+	return nil
+}
+
+// ConcatenateAudioSegments concatenates multiple audio segments into a single audio file
+func ConcatenateAudioSegments(segments []string, outputPath string, audioInfo *AudioInfo) error {
+	return nil
+}
+
+/*
+* Helpers
+ */
+
+// parseSilenceOutput parses FFmpeg silence detection output
+func parseSilenceOutput(output string) ([]float64, []float64) {
+	// Extract silence_start times
+	startRegex := regexp.MustCompile(`silence_start: ([0-9.]+)`)
+	startMatches := startRegex.FindAllStringSubmatch(output, -1)
+
+	// Extract silence_end times
+	endRegex := regexp.MustCompile(`silence_end: ([0-9.]+)`)
+	endMatches := endRegex.FindAllStringSubmatch(output, -1)
+
+	// Convert to float arrays
+	var starts, ends []float64
+
+	for _, match := range startMatches {
+		if len(match) > 1 {
+			time, err := strconv.ParseFloat(match[1], 64)
+			if err == nil {
+				starts = append(starts, time)
+			}
+		}
+	}
+
+	for _, match := range endMatches {
+		if len(match) > 1 {
+			time, err := strconv.ParseFloat(match[1], 64)
+			if err == nil {
+				ends = append(ends, time)
+			}
+		}
+	}
+
+	return starts, ends
+}
+
+// copyAudioFile copies a file from src to dst
+func copyAudioFile(src, dst string) error {
+	// Ensure output directory exists
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Use FFmpeg for copying to handle audio files properly
+	cmd := exec.Command("ffmpeg", "-i", src, "-c", "copy", "-y", dst)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to copy file: %w - %s", err, string(output))
 	}
 
 	return nil

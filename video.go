@@ -87,6 +87,191 @@ func GetVideoInfo(videoPath string) (*VideoInfo, error) {
 	return info, nil
 }
 
+// RemoveVideoSilence processes a video file by removing silent parts
+func RemoveVideoSilence(videoPath, outputPath string, minSilenceLen int, silenceThresh int, config *VideoConfig, logger Logger) error {
+	// Create temporary directories
+	tempDir := filepath.Join(os.TempDir(), "video_processor_"+time.Now().Format("20060102_150405"))
+	audioDir := filepath.Join(tempDir, "audio")
+	segmentsDir := filepath.Join(tempDir, "segments")
+
+	defer os.RemoveAll(tempDir) // Cleanup when done
+
+	// Create directories
+	if err := os.MkdirAll(audioDir, 0755); err != nil {
+		return fmt.Errorf("failed to create audio directory: %w", err)
+	}
+
+	if err := os.MkdirAll(segmentsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create segments directory: %w", err)
+	}
+
+	// Step 1: Get video information for preserving quality
+	logger.Section("Analyzing Video")
+	logger.Step("Getting video information")
+
+	videoInfo, err := GetVideoInfo(videoPath)
+	if err != nil {
+		return fmt.Errorf("failed to get video info: %w", err)
+	}
+
+	logger.Success("Video info: %dx%d, %.2f fps, codec: %s",
+		videoInfo.Width, videoInfo.Height, videoInfo.FrameRate, videoInfo.VideoCodec)
+
+	// Step 2: Extract audio from video
+	logger.Section("Extracting Audio")
+	logger.Step("Extracting audio from video")
+
+	audioPath := filepath.Join(audioDir, "audio.mp3")
+	err = ExtractAudioFromVideo(videoPath, audioPath)
+	if err != nil {
+		return fmt.Errorf("failed to extract audio: %w", err)
+	}
+
+	logger.Success("Audio extracted successfully")
+
+	// Step 3: Detect silence in audio
+	logger.Section("Analyzing Audio")
+	logger.Step("Detecting silence in audio")
+
+	audioSegments, err := DetectNonSilentSegments(audioPath, minSilenceLen, silenceThresh)
+
+	if err != nil {
+		return fmt.Errorf("failed to detect silence: %w", err)
+	}
+
+	// Handle case when no silence is detected
+	if len(audioSegments) == 0 {
+		logger.Info("No silent segments detected in the audio")
+		// Simply copy the input to output since no processing is needed
+		err = copyVideoFile(videoPath, outputPath)
+		if err != nil {
+			return fmt.Errorf("failed to copy video: %w", err)
+		}
+		logger.Success("Original video copied to output path")
+		return nil
+	}
+
+	logger.Success("Detected %d non-silent segments", len(audioSegments))
+
+	// Step 4: Process each segment using goroutines
+	logger.Section("Processing Video Segments")
+	logger.Info("Extracting %d video segments", len(audioSegments))
+
+	// Determine the number of workers based on CPU cores
+	numWorkers := min(min(runtime.NumCPU(), 8), len(audioSegments))
+
+	logger.Info("Using %d parallel workers", numWorkers)
+
+	// Create job and result channels
+	type job struct {
+		index   int
+		segment AudioSegment
+	}
+
+	type result struct {
+		index       int
+		segmentPath string
+		err         error
+	}
+
+	jobs := make(chan job, len(audioSegments))
+	results := make(chan result, len(audioSegments))
+	segmentPaths := make([]string, 0, len(audioSegments))
+
+	// Start worker pool
+	var wg sync.WaitGroup
+	wg.Add(numWorkers)
+
+	for w := 1; w <= numWorkers; w++ {
+		go func(workerID int) {
+			defer wg.Done()
+
+			for j := range jobs {
+				logger.Debug("Worker %d processing segment %d", workerID, j.index+1)
+
+				// Create segment path
+				segmentPath := filepath.Join(segmentsDir, fmt.Sprintf("segment_%03d%s", j.index+1, filepath.Ext(videoPath)))
+
+				// Extract video segment with quality preservation
+				err := extractVideoSegmentWithConfig(
+					videoPath,
+					segmentPath,
+					j.segment.StartTime,
+					j.segment.EndTime,
+					videoInfo,
+					config,
+				)
+
+				if err != nil {
+					logger.Error("Worker %d failed to extract segment %d: %s",
+						workerID, j.index+1, err)
+					results <- result{index: j.index, err: err}
+					continue
+				}
+
+				results <- result{index: j.index, segmentPath: segmentPath, err: nil}
+			}
+		}(w)
+	}
+
+	// Send jobs to workers
+	for i, segment := range audioSegments {
+		jobs <- job{index: i, segment: segment}
+	}
+	close(jobs)
+
+	// Wait for all segments to be processed and collect results
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect segment paths in order
+	validSegments := make([]string, len(audioSegments))
+	var errCount int
+
+	for r := range results {
+		if r.err != nil {
+			errCount++
+			continue
+		}
+
+		logger.Success("Segment %d/%d processed successfully", r.index+1, len(audioSegments))
+		validSegments[r.index] = r.segmentPath
+	}
+
+	// Filter out empty segments
+	for _, path := range validSegments {
+		if path != "" {
+			segmentPaths = append(segmentPaths, path)
+		}
+	}
+
+	if len(segmentPaths) == 0 {
+		return fmt.Errorf("all segments failed to process")
+	}
+
+	// Step 5: Concatenate segments
+	logger.Section("Creating Final Video")
+	logger.Step("Concatenating %d video segments", len(segmentPaths))
+
+	// Create directory for output if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Concatenate segments with quality preservation
+	err = concatenateVideoSegmentsWithConfig(segmentPaths, outputPath, videoInfo, config)
+	if err != nil {
+		return fmt.Errorf("failed to concatenate segments: %w", err)
+	}
+
+	logger.Success("Video processed successfully")
+	logger.Info("Output saved to: %s", outputPath)
+
+	return nil
+}
+
 // ExtractVideoSegment extracts a segment from a video file
 func ExtractVideoSegment(videoPath, outputPath string, startTime, endTime float64, videoInfo *VideoInfo) error {
 	// Ensure output directory exists
@@ -244,280 +429,72 @@ func ConcatenateVideoSegments(segmentPaths []string, outputPath string, videoInf
 	return nil
 }
 
-// RemoveVideoSilence processes a video file by removing silent parts
-func RemoveVideoSilence(videoPath, outputPath string, minSilenceLen int, silenceThresh int, config *VideoConfig, logger Logger) error {
-	// Create temporary directories
-	tempDir := filepath.Join(os.TempDir(), "video_processor_"+time.Now().Format("20060102_150405"))
-	audioDir := filepath.Join(tempDir, "audio")
-	segmentsDir := filepath.Join(tempDir, "segments")
-
-	defer os.RemoveAll(tempDir) // Cleanup when done
-
-	// Create directories
-	if err := os.MkdirAll(audioDir, 0755); err != nil {
-		return fmt.Errorf("failed to create audio directory: %w", err)
-	}
-
-	if err := os.MkdirAll(segmentsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create segments directory: %w", err)
-	}
-
-	// Step 1: Get video information for preserving quality
-	logger.Section("Analyzing Video")
-	logger.Step("Getting video information")
-
-	videoInfo, err := GetVideoInfo(videoPath)
-	if err != nil {
-		return fmt.Errorf("failed to get video info: %w", err)
-	}
-
-	logger.Success("Video info: %dx%d, %.2f fps, codec: %s",
-		videoInfo.Width, videoInfo.Height, videoInfo.FrameRate, videoInfo.VideoCodec)
-
-	// Step 2: Extract audio from video
-	logger.Section("Extracting Audio")
-	logger.Step("Extracting audio from video")
-
-	audioPath := filepath.Join(audioDir, "audio.mp3")
-	err = ExtractAudio(videoPath, audioPath)
-	if err != nil {
-		return fmt.Errorf("failed to extract audio: %w", err)
-	}
-
-	logger.Success("Audio extracted successfully")
-
-	// Step 3: Detect silence in audio
-	logger.Section("Analyzing Audio")
-	logger.Step("Detecting silence in audio")
-
-	audioSegments, err := DetectSilence(audioPath, minSilenceLen, silenceThresh)
-	if err != nil {
-		return fmt.Errorf("failed to detect silence: %w", err)
-	}
-
-	// Handle case when no silence is detected
-	if len(audioSegments) == 0 {
-		logger.Info("No silent segments detected in the audio")
-		// Simply copy the input to output since no processing is needed
-		err = copyVideoFile(videoPath, outputPath)
-		if err != nil {
-			return fmt.Errorf("failed to copy video: %w", err)
-		}
-		logger.Success("Original video copied to output path")
-		return nil
-	}
-
-	logger.Success("Detected %d non-silent segments", len(audioSegments))
-
-	// Step 4: Process each segment using goroutines
-	logger.Section("Processing Video Segments")
-	logger.Info("Extracting %d video segments", len(audioSegments))
-
-	// Determine the number of workers based on CPU cores
-	numWorkers := min(min(runtime.NumCPU(), 8), len(audioSegments))
-
-	logger.Info("Using %d parallel workers", numWorkers)
-
-	// Create job and result channels
-	type job struct {
-		index   int
-		segment AudioSegment
-	}
-
-	type result struct {
-		index       int
-		segmentPath string
-		err         error
-	}
-
-	jobs := make(chan job, len(audioSegments))
-	results := make(chan result, len(audioSegments))
-	segmentPaths := make([]string, 0, len(audioSegments))
-
-	// Start worker pool
-	var wg sync.WaitGroup
-	wg.Add(numWorkers)
-
-	for w := 1; w <= numWorkers; w++ {
-		go func(workerID int) {
-			defer wg.Done()
-
-			for j := range jobs {
-				logger.Debug("Worker %d processing segment %d", workerID, j.index+1)
-
-				// Create segment path
-				segmentPath := filepath.Join(segmentsDir, fmt.Sprintf("segment_%03d%s", j.index+1, filepath.Ext(videoPath)))
-
-				// Extract video segment with quality preservation
-				err := extractVideoSegmentWithConfig(
-					videoPath,
-					segmentPath,
-					j.segment.StartTime,
-					j.segment.EndTime,
-					videoInfo,
-					config,
-				)
-
-				if err != nil {
-					logger.Error("Worker %d failed to extract segment %d: %s",
-						workerID, j.index+1, err)
-					results <- result{index: j.index, err: err}
-					continue
-				}
-
-				results <- result{index: j.index, segmentPath: segmentPath, err: nil}
-			}
-		}(w)
-	}
-
-	// Send jobs to workers
-	for i, segment := range audioSegments {
-		jobs <- job{index: i, segment: segment}
-	}
-	close(jobs)
-
-	// Wait for all segments to be processed and collect results
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect segment paths in order
-	validSegments := make([]string, len(audioSegments))
-	var errCount int
-
-	for r := range results {
-		if r.err != nil {
-			errCount++
-			continue
-		}
-
-		logger.Success("Segment %d/%d processed successfully", r.index+1, len(audioSegments))
-		validSegments[r.index] = r.segmentPath
-	}
-
-	// Filter out empty segments
-	for _, path := range validSegments {
-		if path != "" {
-			segmentPaths = append(segmentPaths, path)
-		}
-	}
-
-	if len(segmentPaths) == 0 {
-		return fmt.Errorf("all segments failed to process")
-	}
-
-	// Step 5: Concatenate segments
-	logger.Section("Creating Final Video")
-	logger.Step("Concatenating %d video segments", len(segmentPaths))
-
-	// Create directory for output if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
-	}
-
-	// Concatenate segments with quality preservation
-	err = concatenateVideoSegmentsWithConfig(segmentPaths, outputPath, videoInfo, config)
-	if err != nil {
-		return fmt.Errorf("failed to concatenate segments: %w", err)
-	}
-
-	logger.Success("Video processed successfully")
-	logger.Info("Output saved to: %s", outputPath)
-
-	return nil
-}
-
-// extractVideoSegmentWithConfig extracts a segment from a video file with configuration options
-func extractVideoSegmentWithConfig(videoPath, outputPath string, startTime, endTime float64, videoInfo *VideoInfo, config *VideoConfig) error {
+// ResizeVideo resizes a video according to the specified configuration
+func ResizeVideo(inputPath, outputPath string, videoInfo *VideoInfo, config *VideoConfig) error {
 	// Ensure output directory exists
 	err := os.MkdirAll(filepath.Dir(outputPath), 0755)
 	if err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Build FFmpeg command with precise quality preservation
+	// Build FFmpeg command
 	args := []string{
-		"-i", videoPath,
-		"-ss", fmt.Sprintf("%.3f", startTime),
-		"-to", fmt.Sprintf("%.3f", endTime),
+		"-i", inputPath,
 	}
 
-	// Apply video configuration if provided
+	// Apply configuration
 	if config != nil {
-		// Video codec
-		if config.VideoCodec != "" {
-			args = append(args, "-c:v", config.VideoCodec)
-		} else if !config.PreserveCodecs && videoInfo.VideoCodec != "" {
-			args = append(args, "-c:v", videoInfo.VideoCodec)
-		}
-
-		// Audio codec
-		if config.AudioCodec != "" {
-			args = append(args, "-c:a", config.AudioCodec)
-		} else if !config.PreserveCodecs && videoInfo.AudioCodec != "" {
-			args = append(args, "-c:a", videoInfo.AudioCodec)
-		}
-
-		// Frame rate
-		if config.FrameRate > 0 {
-			args = append(args, "-r", fmt.Sprintf("%.3f", config.FrameRate))
-		} else if videoInfo.FrameRate > 0 {
-			args = append(args, "-r", fmt.Sprintf("%.3f", videoInfo.FrameRate))
-		}
-
-		// Resolution
+		// Set resolution
 		if config.TargetResolution != "" {
 			args = append(args, "-s", config.TargetResolution)
-		} else if videoInfo.Width > 0 && videoInfo.Height > 0 {
-			args = append(args, "-s", fmt.Sprintf("%dx%d", videoInfo.Width, videoInfo.Height))
 		}
 
-		// Pixel format
+		// Set frame rate
+		if config.FrameRate > 0 {
+			args = append(args, "-r", fmt.Sprintf("%.3f", config.FrameRate))
+		}
+
+		// Set video codec
+		if config.VideoCodec != "" {
+			args = append(args, "-c:v", config.VideoCodec)
+		} else {
+			// Default to libx264 for compatibility
+			args = append(args, "-c:v", "libx264")
+		}
+
+		// Set audio codec
+		if config.AudioCodec != "" {
+			args = append(args, "-c:a", config.AudioCodec)
+		} else if config.PreserveCodecs && videoInfo.AudioCodec != "" {
+			args = append(args, "-c:a", "copy")
+		} else {
+			args = append(args, "-c:a", "aac")
+		}
+
+		// Set pixel format
 		if config.PixelFormat != "" {
 			args = append(args, "-pix_fmt", config.PixelFormat)
-		} else if videoInfo.PixelFormat != "" {
-			args = append(args, "-pix_fmt", videoInfo.PixelFormat)
 		}
 
-		// Quality (CRF)
+		// Set quality (CRF)
 		if config.CRF > 0 {
 			args = append(args, "-crf", strconv.Itoa(config.CRF))
 		} else {
-			args = append(args, "-crf", "18") // Default high quality
+			args = append(args, "-crf", "23") // Default medium quality
 		}
 
-		// Encoding preset
+		// Set encoding preset
 		if config.Preset != "" {
 			args = append(args, "-preset", config.Preset)
 		} else {
-			args = append(args, "-preset", "medium") // Default preset
+			args = append(args, "-preset", "medium")
 		}
 	} else {
-		// Use default settings from original video
-		if videoInfo.VideoCodec != "" {
-			args = append(args, "-c:v", videoInfo.VideoCodec)
-		}
-
-		if videoInfo.AudioCodec != "" {
-			args = append(args, "-c:a", videoInfo.AudioCodec)
-		}
-
-		if videoInfo.FrameRate > 0 {
-			args = append(args, "-r", fmt.Sprintf("%.3f", videoInfo.FrameRate))
-		}
-
-		if videoInfo.Width > 0 && videoInfo.Height > 0 {
-			args = append(args, "-s", fmt.Sprintf("%dx%d", videoInfo.Width, videoInfo.Height))
-		}
-
-		if videoInfo.PixelFormat != "" {
-			args = append(args, "-pix_fmt", videoInfo.PixelFormat)
-		}
-
-		// Set default high quality
+		// Default resize settings for good quality
 		args = append(args,
-			"-crf", "18",
+			"-c:v", "libx264",
+			"-c:a", "aac",
+			"-crf", "23",
 			"-preset", "medium")
 	}
 
@@ -533,6 +510,10 @@ func extractVideoSegmentWithConfig(videoPath, outputPath string, startTime, endT
 
 	return nil
 }
+
+/*
+* Helpers
+ */
 
 // concatenateVideoSegmentsWithConfig concatenates multiple video segments into a single video with configuration
 func concatenateVideoSegmentsWithConfig(segmentPaths []string, outputPath string, videoInfo *VideoInfo, config *VideoConfig) error {
@@ -651,88 +632,6 @@ func concatenateVideoSegmentsWithConfig(segmentPaths []string, outputPath string
 	return nil
 }
 
-// ResizeVideo resizes a video according to the specified configuration
-func ResizeVideo(inputPath, outputPath string, videoInfo *VideoInfo, config *VideoConfig) error {
-	// Ensure output directory exists
-	err := os.MkdirAll(filepath.Dir(outputPath), 0755)
-	if err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
-	}
-
-	// Build FFmpeg command
-	args := []string{
-		"-i", inputPath,
-	}
-
-	// Apply configuration
-	if config != nil {
-		// Set resolution
-		if config.TargetResolution != "" {
-			args = append(args, "-s", config.TargetResolution)
-		}
-
-		// Set frame rate
-		if config.FrameRate > 0 {
-			args = append(args, "-r", fmt.Sprintf("%.3f", config.FrameRate))
-		}
-
-		// Set video codec
-		if config.VideoCodec != "" {
-			args = append(args, "-c:v", config.VideoCodec)
-		} else {
-			// Default to libx264 for compatibility
-			args = append(args, "-c:v", "libx264")
-		}
-
-		// Set audio codec
-		if config.AudioCodec != "" {
-			args = append(args, "-c:a", config.AudioCodec)
-		} else if config.PreserveCodecs && videoInfo.AudioCodec != "" {
-			args = append(args, "-c:a", "copy")
-		} else {
-			args = append(args, "-c:a", "aac")
-		}
-
-		// Set pixel format
-		if config.PixelFormat != "" {
-			args = append(args, "-pix_fmt", config.PixelFormat)
-		}
-
-		// Set quality (CRF)
-		if config.CRF > 0 {
-			args = append(args, "-crf", strconv.Itoa(config.CRF))
-		} else {
-			args = append(args, "-crf", "23") // Default medium quality
-		}
-
-		// Set encoding preset
-		if config.Preset != "" {
-			args = append(args, "-preset", config.Preset)
-		} else {
-			args = append(args, "-preset", "medium")
-		}
-	} else {
-		// Default resize settings for good quality
-		args = append(args,
-			"-c:v", "libx264",
-			"-c:a", "aac",
-			"-crf", "23",
-			"-preset", "medium")
-	}
-
-	// Add output path
-	args = append(args, "-y", outputPath)
-
-	// Execute FFmpeg command
-	cmd := exec.Command("ffmpeg", args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("FFmpeg error: %w - %s", err, string(output))
-	}
-
-	return nil
-}
-
 // parseResolution parses a resolution string like "1920x1080" and returns normalized format
 func parseResolution(resolution string) string {
 	// Split by 'x' or 'X'
@@ -787,25 +686,107 @@ func copyVideoFile(src, dst string) error {
 	return nil
 }
 
-// Extract audio from a video file
-func ExtractAudio(videoPath, outputPath string) error {
-	// Check if FFmpeg is available
-	_, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		return fmt.Errorf("ffmpeg not found in PATH: %w", err)
-	}
-
-	// Create output directory if it doesn't exist
-	err = os.MkdirAll(filepath.Dir(outputPath), 0755)
+// extractVideoSegmentWithConfig extracts a segment from a video file with configuration options
+func extractVideoSegmentWithConfig(videoPath, outputPath string, startTime, endTime float64, videoInfo *VideoInfo, config *VideoConfig) error {
+	// Ensure output directory exists
+	err := os.MkdirAll(filepath.Dir(outputPath), 0755)
 	if err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Extract audio from video
-	cmd := exec.Command("ffmpeg", "-i", videoPath, "-q:a", "2", "-y", outputPath)
+	// Build FFmpeg command with precise quality preservation
+	args := []string{
+		"-i", videoPath,
+		"-ss", fmt.Sprintf("%.3f", startTime),
+		"-to", fmt.Sprintf("%.3f", endTime),
+	}
+
+	// Apply video configuration if provided
+	if config != nil {
+		// Video codec
+		if config.VideoCodec != "" {
+			args = append(args, "-c:v", config.VideoCodec)
+		} else if !config.PreserveCodecs && videoInfo.VideoCodec != "" {
+			args = append(args, "-c:v", videoInfo.VideoCodec)
+		}
+
+		// Audio codec
+		if config.AudioCodec != "" {
+			args = append(args, "-c:a", config.AudioCodec)
+		} else if !config.PreserveCodecs && videoInfo.AudioCodec != "" {
+			args = append(args, "-c:a", videoInfo.AudioCodec)
+		}
+
+		// Frame rate
+		if config.FrameRate > 0 {
+			args = append(args, "-r", fmt.Sprintf("%.3f", config.FrameRate))
+		} else if videoInfo.FrameRate > 0 {
+			args = append(args, "-r", fmt.Sprintf("%.3f", videoInfo.FrameRate))
+		}
+
+		// Resolution
+		if config.TargetResolution != "" {
+			args = append(args, "-s", config.TargetResolution)
+		} else if videoInfo.Width > 0 && videoInfo.Height > 0 {
+			args = append(args, "-s", fmt.Sprintf("%dx%d", videoInfo.Width, videoInfo.Height))
+		}
+
+		// Pixel format
+		if config.PixelFormat != "" {
+			args = append(args, "-pix_fmt", config.PixelFormat)
+		} else if videoInfo.PixelFormat != "" {
+			args = append(args, "-pix_fmt", videoInfo.PixelFormat)
+		}
+
+		// Quality (CRF)
+		if config.CRF > 0 {
+			args = append(args, "-crf", strconv.Itoa(config.CRF))
+		} else {
+			args = append(args, "-crf", "18") // Default high quality
+		}
+
+		// Encoding preset
+		if config.Preset != "" {
+			args = append(args, "-preset", config.Preset)
+		} else {
+			args = append(args, "-preset", "medium") // Default preset
+		}
+	} else {
+		// Use default settings from original video
+		if videoInfo.VideoCodec != "" {
+			args = append(args, "-c:v", videoInfo.VideoCodec)
+		}
+
+		if videoInfo.AudioCodec != "" {
+			args = append(args, "-c:a", videoInfo.AudioCodec)
+		}
+
+		if videoInfo.FrameRate > 0 {
+			args = append(args, "-r", fmt.Sprintf("%.3f", videoInfo.FrameRate))
+		}
+
+		if videoInfo.Width > 0 && videoInfo.Height > 0 {
+			args = append(args, "-s", fmt.Sprintf("%dx%d", videoInfo.Width, videoInfo.Height))
+		}
+
+		if videoInfo.PixelFormat != "" {
+			args = append(args, "-pix_fmt", videoInfo.PixelFormat)
+		}
+
+		// Set default high quality
+		args = append(args,
+			"-crf", "18",
+			"-preset", "medium")
+	}
+
+	// Add output path
+	args = append(args, "-y", outputPath)
+
+	// Execute FFmpeg command
+	cmd := exec.Command("ffmpeg", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to extract audio: %w - %s", err, string(output))
+		return fmt.Errorf("FFmpeg error: %w - %s", err, string(output))
 	}
 
 	return nil
