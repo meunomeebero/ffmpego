@@ -63,6 +63,10 @@ func (a *AudioProcessor) ExtractFromVideo(videoPath, outputPath string) error {
 	return ExtractAudioFromVideo(videoPath, outputPath)
 }
 
+func (a *AudioProcessor) DetectNonSilentSegments(audioPath string, minSilenceLen int, silenceThresh int) ([]AudioSegment, error) {
+	return DetectNonSilentSegments(audioPath, minSilenceLen, silenceThresh)
+}
+
 // ExtractSegment extracts a segment from an audio file
 func (a *AudioProcessor) ExtractSegment(audioPath, outputPath string, startTime, endTime float64, audioInfo *AudioInfo) error {
 	return ExtractAudioSegment(audioPath, outputPath, startTime, endTime, audioInfo)
@@ -81,12 +85,14 @@ type VideoProcessor struct {
 // GetInfo retrieves information about a video file
 func (v *VideoProcessor) GetInfo(videoPath string) (*VideoInfo, error) {
 	info, err := GetVideoInfo(videoPath)
+
 	if err != nil {
 		return nil, err
 	}
 
 	// Add file size information
 	fileInfo, err := os.Stat(videoPath)
+
 	if err == nil {
 		info.FileSizeBytes = fileInfo.Size()
 	}
@@ -110,18 +116,18 @@ func (v *VideoProcessor) ConcatenateSegments(segments []string, outputPath strin
 	return ConcatenateVideoSegments(segments, outputPath, videoInfo)
 }
 
-// Resize resizes a video file according to the specified configuration
-func (v *VideoProcessor) Resize(inputPath, outputPath string, config *VideoConfig) error {
+// Convert converts a video file according to the specified configuration
+func (v *VideoProcessor) Convert(inputPath, outputPath string, config *VideoConfig) error {
 	// Get video info to preserve aspects that aren't changing
 	videoInfo, err := v.GetInfo(inputPath)
+
 	if err != nil {
 		return fmt.Errorf("failed to get video info: %w", err)
 	}
 
-	// Create output directory if it doesn't exist
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	return ResizeVideo(inputPath, outputPath, videoInfo, config)
+	return ConvertVideo(inputPath, outputPath, videoInfo, config)
 }

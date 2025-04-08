@@ -45,7 +45,7 @@ func main() {
 		PixelFormat:      ffmpego.PixelFormatYuv420p, // Using constant for pixel format
 	}
 
-	err = ffmpeg.Video.Resize(inputFile, outputFile, videoConfig)
+	err = ffmpeg.Video.Convert(inputFile, outputFile, videoConfig)
 	if err != nil {
 		log.Fatalf("Error resizing video: %v", err)
 	}

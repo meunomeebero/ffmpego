@@ -425,6 +425,81 @@ func ExtractAudioSegment(inputPath, outputPath string, startTime, endTime float6
 
 // ConcatenateAudioSegments concatenates multiple audio segments into a single audio file
 func ConcatenateAudioSegments(segments []string, outputPath string, audioInfo *AudioInfo) error {
+	// Check if segments exist
+	if len(segments) == 0 {
+		return fmt.Errorf("no segments to concatenate")
+	}
+
+	// Create temporary file list
+	tempDir := os.TempDir()
+	fileListPath := filepath.Join(tempDir, "audio_segments_list.txt")
+
+	fileList, err := os.Create(fileListPath)
+	if err != nil {
+		return fmt.Errorf("failed to create file list: %w", err)
+	}
+	defer fileList.Close()
+	defer os.Remove(fileListPath)
+
+	// Write segment paths to file list
+	for _, segmentPath := range segments {
+		if _, err := os.Stat(segmentPath); os.IsNotExist(err) {
+			continue // Skip non-existent segments
+		}
+		fileList.WriteString(fmt.Sprintf("file '%s'\n", segmentPath))
+	}
+	fileList.Close()
+
+	// Create output directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Build FFmpeg command for concatenation
+	args := []string{
+		"-f", "concat",
+		"-safe", "0",
+		"-i", fileListPath,
+	}
+
+	// Add audio settings to preserve quality
+	if audioInfo != nil {
+		// Use the same audio codec if available
+		if audioInfo.Codec != "" {
+			args = append(args, "-c:a", audioInfo.Codec)
+		} else {
+			args = append(args, "-c:a", "libmp3lame") // Default to MP3
+		}
+
+		// Preserve sample rate if available
+		if audioInfo.SampleRate > 0 {
+			args = append(args, "-ar", strconv.Itoa(audioInfo.SampleRate))
+		}
+
+		// Preserve channels if available
+		if audioInfo.Channels > 0 {
+			args = append(args, "-ac", strconv.Itoa(audioInfo.Channels))
+		}
+
+		// Set quality if using MP3
+		if audioInfo.Codec == "libmp3lame" {
+			args = append(args, "-q:a", "2") // High quality
+		}
+	} else {
+		// Default high quality settings
+		args = append(args, "-c:a", "libmp3lame", "-q:a", "2")
+	}
+
+	// Add output path
+	args = append(args, "-y", outputPath)
+
+	// Execute FFmpeg command
+	cmd := exec.Command("ffmpeg", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to concatenate segments: %w - %s", err, string(output))
+	}
+
 	return nil
 }
 

@@ -430,7 +430,7 @@ func ConcatenateVideoSegments(segmentPaths []string, outputPath string, videoInf
 }
 
 // ResizeVideo resizes a video according to the specified configuration
-func ResizeVideo(inputPath, outputPath string, videoInfo *VideoInfo, config *VideoConfig) error {
+func ConvertVideo(inputPath, outputPath string, videoInfo *VideoInfo, config *VideoConfig) error {
 	// Ensure output directory exists
 	err := os.MkdirAll(filepath.Dir(outputPath), 0755)
 	if err != nil {
