@@ -58,30 +58,6 @@ func GetAudioInfo(audioPath string) (*AudioInfo, error) {
 	return info, nil
 }
 
-// ExtractAudio extracts audio from a video file
-func ExtractAudioFromVideo(videoPath, outputPath string) error {
-	// Check if FFmpeg is available
-	_, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		return fmt.Errorf("ffmpeg not found in PATH: %w", err)
-	}
-
-	// Create output directory if it doesn't exist
-	err = os.MkdirAll(filepath.Dir(outputPath), 0755)
-	if err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
-	}
-
-	// Extract audio from video
-	cmd := exec.Command("ffmpeg", "-i", videoPath, "-q:a", "2", "-y", outputPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to extract audio: %w - %s", err, string(output))
-	}
-
-	return nil
-}
-
 // GetAudioDuration returns the duration of an audio file
 func GetAudioDuration(audioPath string) (float64, error) {
 	// Check if FFprobe is available
