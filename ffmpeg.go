@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/meunomeebero/ffmpego/internal/types"
+	"github.com/meunomeebero/ffmpego/video"
 )
 
 // FFmpeg is the main struct that provides access to all FFmpeg functionality
@@ -37,7 +40,7 @@ type AudioProcessor struct {
 }
 
 // GetInfo retrieves information about an audio file
-func (a *AudioProcessor) GetInfo(audioPath string) (*AudioInfo, error) {
+func (a *AudioProcessor) GetInfo(audioPath string) (*types.AudioInfo, error) {
 	info, err := GetAudioInfo(audioPath)
 	if err != nil {
 		return nil, err
@@ -53,7 +56,7 @@ func (a *AudioProcessor) GetInfo(audioPath string) (*AudioInfo, error) {
 }
 
 // RemoveSilence processes an audio file by removing silent parts
-func (a *AudioProcessor) RemoveSilence(audioPath, outputPath string, silenceConfig SilenceConfig, audioConfig *AudioConfig) error {
+func (a *AudioProcessor) RemoveSilence(audioPath, outputPath string, silenceConfig types.SilenceConfig, audioConfig *types.AudioConfig) error {
 	return RemoveAudioSilence(audioPath, outputPath, silenceConfig.MinSilenceLen, silenceConfig.SilenceThresh,
 		audioConfig, a.ffmpeg.logger)
 }
@@ -63,17 +66,17 @@ func (a *AudioProcessor) ExtractFromVideo(videoPath, outputPath string) error {
 	return ExtractAudioFromVideo(videoPath, outputPath)
 }
 
-func (a *AudioProcessor) DetectNonSilentSegments(audioPath string, minSilenceLen int, silenceThresh int) ([]AudioSegment, error) {
+func (a *AudioProcessor) DetectNonSilentSegments(audioPath string, minSilenceLen int, silenceThresh int) ([]types.AudioSegment, error) {
 	return DetectNonSilentSegments(audioPath, minSilenceLen, silenceThresh)
 }
 
 // ExtractSegment extracts a segment from an audio file
-func (a *AudioProcessor) ExtractSegment(audioPath, outputPath string, startTime, endTime float64, audioInfo *AudioInfo) error {
+func (a *AudioProcessor) ExtractSegment(audioPath, outputPath string, startTime, endTime float64, audioInfo *types.AudioInfo) error {
 	return ExtractAudioSegment(audioPath, outputPath, startTime, endTime, audioInfo)
 }
 
 // ConcatenateSegments concatenates multiple audio segments into a single audio
-func (a *AudioProcessor) ConcatenateSegments(segments []string, outputPath string, audioInfo *AudioInfo) error {
+func (a *AudioProcessor) ConcatenateSegments(segments []string, outputPath string, audioInfo *types.AudioInfo) error {
 	return ConcatenateAudioSegments(segments, outputPath, audioInfo)
 }
 
@@ -83,8 +86,8 @@ type VideoProcessor struct {
 }
 
 // GetInfo retrieves information about a video file
-func (v *VideoProcessor) GetInfo(videoPath string) (*VideoInfo, error) {
-	info, err := GetVideoInfo(videoPath)
+func (v *VideoProcessor) GetInfo(videoPath string) (*types.VideoInfo, error) {
+	info, err := video.GetInfo(videoPath)
 
 	if err != nil {
 		return nil, err
@@ -101,23 +104,23 @@ func (v *VideoProcessor) GetInfo(videoPath string) (*VideoInfo, error) {
 }
 
 // RemoveSilence processes a video file by removing silent parts
-func (v *VideoProcessor) RemoveSilence(videoPath, outputPath string, silenceConfig SilenceConfig, videoConfig *VideoConfig) error {
+func (v *VideoProcessor) RemoveSilence(videoPath, outputPath string, silenceConfig types.SilenceConfig, videoConfig *types.VideoConfig) error {
 	return RemoveVideoSilence(videoPath, outputPath, silenceConfig.MinSilenceLen, silenceConfig.SilenceThresh,
 		videoConfig, v.ffmpeg.logger)
 }
 
 // ExtractSegment extracts a segment from a video file
-func (v *VideoProcessor) ExtractSegment(videoPath, outputPath string, startTime, endTime float64, videoInfo *VideoInfo) error {
+func (v *VideoProcessor) ExtractSegment(videoPath, outputPath string, startTime, endTime float64, videoInfo *types.VideoInfo) error {
 	return ExtractVideoSegment(videoPath, outputPath, startTime, endTime, videoInfo)
 }
 
 // ConcatenateSegments concatenates multiple video segments into a single video
-func (v *VideoProcessor) ConcatenateSegments(segments []string, outputPath string, videoInfo *VideoInfo) error {
+func (v *VideoProcessor) ConcatenateSegments(segments []string, outputPath string, videoInfo *types.VideoInfo) error {
 	return ConcatenateVideoSegments(segments, outputPath, videoInfo)
 }
 
 // Convert converts a video file according to the specified configuration
-func (v *VideoProcessor) Convert(inputPath, outputPath string, config *VideoConfig) error {
+func (v *VideoProcessor) Convert(inputPath, outputPath string, config *types.VideoConfig) error {
 	// Get video info to preserve aspects that aren't changing
 	videoInfo, err := v.GetInfo(inputPath)
 

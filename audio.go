@@ -1,6 +1,8 @@
 package ffmpego
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/meunomeebero/ffmpego/internal/types"
 )
 
 /*
@@ -16,7 +20,7 @@ import (
  */
 
 // GetAudioInfo retrieves information about an audio file
-func GetAudioInfo(audioPath string) (*AudioInfo, error) {
+func GetAudioInfo(audioPath string) (*types.AudioInfo, error) {
 	// Check if FFprobe is available
 	_, err := exec.LookPath("ffprobe")
 	if err != nil {
@@ -38,7 +42,7 @@ func GetAudioInfo(audioPath string) (*AudioInfo, error) {
 	}
 
 	// Parse output
-	info := &AudioInfo{}
+	info := &types.AudioInfo{}
 	lines := strings.Split(string(output), "\n")
 
 	for _, line := range lines {
@@ -52,10 +56,17 @@ func GetAudioInfo(audioPath string) (*AudioInfo, error) {
 			info.Codec = strings.TrimPrefix(line, "codec_name=")
 		} else if strings.HasPrefix(line, "bit_rate=") {
 			bitRateStr := strings.TrimPrefix(line, "bit_rate=")
-			info.BitRate, _ = strconv.Atoi(bitRateStr)
+			// Handle 'N/A' case for bit rate
+			if bitRateStr != "N/A" {
+				info.BitRate, _ = strconv.Atoi(bitRateStr)
+				info.BitRate /= 1000 // Convert bps to kbps
+			}
 		} else if strings.HasPrefix(line, "duration=") {
 			durStr := strings.TrimPrefix(line, "duration=")
-			info.Duration, _ = strconv.ParseFloat(durStr, 64)
+			// Handle 'N/A' case for duration
+			if durStr != "N/A" {
+				info.Duration, _ = strconv.ParseFloat(durStr, 64)
+			}
 		}
 	}
 
@@ -63,217 +74,61 @@ func GetAudioInfo(audioPath string) (*AudioInfo, error) {
 }
 
 // RemoveAudioSilence processes an audio file by removing silent parts
-func RemoveAudioSilence(audioPath, outputPath string, minSilenceLen int, silenceThresh int, config *AudioConfig, logger Logger) error {
-	// Create temporary directories
-	tempDir := filepath.Join(os.TempDir(), "audio_processor_"+time.Now().Format("20060102_150405"))
-	segmentsDir := filepath.Join(tempDir, "segments")
-
-	defer os.RemoveAll(tempDir) // Cleanup when done
-
-	// Create directories
-	if err := os.MkdirAll(segmentsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create segments directory: %w", err)
-	}
-
-	// Step 1: Get audio information for preserving quality
-	logger.Section("Analyzing Audio")
-	logger.Step("Getting audio information")
-
-	audioInfo, err := GetAudioInfo(audioPath)
-	if err != nil {
-		return fmt.Errorf("failed to get audio info: %w", err)
-	}
-
-	logger.Success("Audio info: %d Hz, %d channels, codec: %s",
-		audioInfo.SampleRate, audioInfo.Channels, audioInfo.Codec)
-
-	// Step 2: Detect silence in audio
-	logger.Step("Detecting silence in audio")
-
-	audioSegments, err := DetectNonSilentSegments(audioPath, minSilenceLen, silenceThresh)
+func RemoveAudioSilence(audioPath, outputPath string, minSilenceLen int, silenceThresh int, config *types.AudioConfig, logger Logger) error {
+	// Detect non-silent segments
+	segments, err := DetectNonSilentSegments(audioPath, minSilenceLen, silenceThresh)
 	if err != nil {
 		return fmt.Errorf("failed to detect silence: %w", err)
 	}
 
-	// Handle case when no silence is detected
-	if len(audioSegments) == 0 {
-		logger.Info("No silent segments detected in the audio")
-		// Simply copy the input to output since no processing is needed
-		err = copyAudioFile(audioPath, outputPath)
-		if err != nil {
-			return fmt.Errorf("failed to copy audio: %w", err)
+	// Handle case where no segments are found (entire file is silent)
+	if len(segments) == 0 {
+		logger.Info("No audible segments found, output will be empty")
+		// Create an empty file or handle as appropriate
+		f, createErr := os.Create(outputPath)
+		if createErr != nil {
+			return fmt.Errorf("failed to create empty output file: %w", createErr)
 		}
-		logger.Success("Original audio copied to output path")
+		f.Close()
 		return nil
 	}
 
-	logger.Success("Detected %d non-silent segments", len(audioSegments))
+	// Create temporary directory for segments
+	tempDir := filepath.Join(os.TempDir(), "audio_processor_"+time.Now().Format("20060102_150405"))
+	defer os.RemoveAll(tempDir)
 
-	// Step 3: Extract each audio segment
-	logger.Section("Processing Audio Segments")
-	logger.Info("Extracting %d audio segments", len(audioSegments))
-
-	segmentPaths := make([]string, len(audioSegments))
-	fileListPath := filepath.Join(tempDir, "segments.txt")
-	fileList, err := os.Create(fileListPath)
-	if err != nil {
-		return fmt.Errorf("failed to create file list: %w", err)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return fmt.Errorf("failed to create temporary directory: %w", err)
 	}
-	defer fileList.Close()
 
-	for i, segment := range audioSegments {
-		segmentPath := filepath.Join(segmentsDir, fmt.Sprintf("segment_%03d.mp3", i+1))
+	// Extract segments
+	segmentPaths := make([]string, 0, len(segments))
+	for i, segment := range segments {
+		segmentPath := filepath.Join(tempDir, fmt.Sprintf("segment_%03d.mp3", i+1))
 
-		// Extract audio segment
-		logger.Debug("Extracting segment %d (%.2fs to %.2fs)", i+1, segment.StartTime, segment.EndTime)
-
-		args := []string{
-			"-i", audioPath,
-			"-ss", fmt.Sprintf("%.3f", segment.StartTime),
-			"-to", fmt.Sprintf("%.3f", segment.EndTime),
+		// Get audio info for quality preservation
+		audioInfo, infoErr := GetAudioInfo(audioPath)
+		if infoErr != nil {
+			return fmt.Errorf("failed to get audio info for segment %d: %w", i+1, infoErr)
 		}
 
-		// Apply audio configuration if provided
-		if config != nil {
-			// Use specified codec or original
-			if config.Codec != "" {
-				args = append(args, "-c:a", config.Codec)
-			} else {
-				args = append(args, "-c:a", audioInfo.Codec)
-			}
-
-			// Apply sample rate if specified
-			if config.SampleRate > 0 {
-				args = append(args, "-ar", strconv.Itoa(config.SampleRate))
-			} else {
-				args = append(args, "-ar", strconv.Itoa(audioInfo.SampleRate))
-			}
-
-			// Apply channels if specified
-			if config.Channels > 0 {
-				args = append(args, "-ac", strconv.Itoa(config.Channels))
-			} else {
-				args = append(args, "-ac", strconv.Itoa(audioInfo.Channels))
-			}
-
-			// Apply quality if specified
-			if config.Quality > 0 {
-				args = append(args, "-q:a", strconv.Itoa(config.Quality))
-			}
-
-			// Apply bitrate if specified
-			if config.BitRate > 0 {
-				args = append(args, "-b:a", fmt.Sprintf("%dk", config.BitRate))
-			}
-		} else {
-			// Use default settings to preserve quality
-			args = append(args,
-				"-c:a", audioInfo.Codec,
-				"-ar", strconv.Itoa(audioInfo.SampleRate),
-				"-ac", strconv.Itoa(audioInfo.Channels))
-		}
-
-		// Add output path
-		args = append(args, "-y", segmentPath)
-
-		cmd := exec.Command("ffmpeg", args...)
-		output, err := cmd.CombinedOutput()
+		err = ExtractAudioSegment(audioPath, segmentPath, segment.StartTime, segment.EndTime, audioInfo)
 		if err != nil {
-			logger.Error("Failed to extract segment %d: %s - %s", i+1, err, string(output))
-			continue
+			return fmt.Errorf("failed to extract segment %d: %w", i+1, err)
 		}
-
-		segmentPaths[i] = segmentPath
-		fileList.WriteString(fmt.Sprintf("file '%s'\n", segmentPath))
-		logger.Success("Segment %d/%d processed successfully", i+1, len(audioSegments))
+		segmentPaths = append(segmentPaths, segmentPath)
 	}
 
-	fileList.Close()
-
-	// Filter out any failed segments
-	validSegmentCount := 0
-	for _, path := range segmentPaths {
-		if path != "" {
-			validSegmentCount++
-		}
-	}
-
-	if validSegmentCount == 0 {
-		return fmt.Errorf("all segments failed to process")
-	}
-
-	// Step 4: Concatenate segments
-	logger.Section("Creating Final Audio")
-	logger.Step("Concatenating %d audio segments", validSegmentCount)
-
-	// Create directory for output if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
-	}
-
-	// Use FFmpeg's concat demuxer to combine the segments
-	args := []string{
-		"-f", "concat",
-		"-safe", "0",
-		"-i", fileListPath,
-	}
-
-	// Apply audio configuration if provided
-	if config != nil {
-		// Use specified codec or original
-		if config.Codec != "" {
-			args = append(args, "-c:a", config.Codec)
-		} else {
-			args = append(args, "-c:a", audioInfo.Codec)
-		}
-
-		// Apply sample rate if specified
-		if config.SampleRate > 0 {
-			args = append(args, "-ar", strconv.Itoa(config.SampleRate))
-		} else {
-			args = append(args, "-ar", strconv.Itoa(audioInfo.SampleRate))
-		}
-
-		// Apply channels if specified
-		if config.Channels > 0 {
-			args = append(args, "-ac", strconv.Itoa(config.Channels))
-		} else {
-			args = append(args, "-ac", strconv.Itoa(audioInfo.Channels))
-		}
-
-		// Apply quality if specified
-		if config.Quality > 0 {
-			args = append(args, "-q:a", strconv.Itoa(config.Quality))
-		}
-
-		// Apply bitrate if specified
-		if config.BitRate > 0 {
-			args = append(args, "-b:a", fmt.Sprintf("%dk", config.BitRate))
-		}
-	} else {
-		// Use default settings to preserve quality
-		args = append(args,
-			"-c:a", audioInfo.Codec,
-			"-ar", strconv.Itoa(audioInfo.SampleRate),
-			"-ac", strconv.Itoa(audioInfo.Channels))
-	}
-
-	// Add output path
-	args = append(args, "-y", outputPath)
-
-	cmd := exec.Command("ffmpeg", args...)
-	output, err := cmd.CombinedOutput()
+	// Concatenate segments with specified configuration
+	err = concatenateAudioSegmentsWithConfig(segmentPaths, outputPath, config)
 	if err != nil {
-		return fmt.Errorf("failed to concatenate segments: %w - %s", err, string(output))
+		return fmt.Errorf("failed to concatenate segments: %w", err)
 	}
-
-	logger.Success("Audio processed successfully")
-	logger.Info("Output saved to: %s", outputPath)
 
 	return nil
 }
 
-// Extract audio from a video file and save it to a file
+// ExtractAudioFromVideo extracts audio from a video file
 func ExtractAudioFromVideo(videoPath, outputPath string) error {
 	// Check if FFmpeg is available
 	_, err := exec.LookPath("ffmpeg")
@@ -281,136 +136,184 @@ func ExtractAudioFromVideo(videoPath, outputPath string) error {
 		return fmt.Errorf("ffmpeg not found in PATH: %w", err)
 	}
 
-	// Create output directory if it doesn't exist
-	err = os.MkdirAll(filepath.Dir(outputPath), 0755)
-	if err != nil {
+	// Ensure output directory exists
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Extract audio from video
-	cmd := exec.Command("ffmpeg", "-i", videoPath, "-q:a", "2", "-y", outputPath)
+	// Build FFmpeg command
+	cmd := exec.Command("ffmpeg",
+		"-i", videoPath,
+		"-vn",                   // Disable video recording
+		"-acodec", "libmp3lame", // Specify MP3 codec
+		"-ab", "192k", // Set audio bitrate
+		"-ar", "44100", // Set audio sample rate
+		"-ac", "2", // Set audio channels to stereo
+		"-y", // Overwrite output file if it exists
+		outputPath)
+
+	// Execute command
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to extract audio: %w - %s", err, string(output))
+		return fmt.Errorf("FFmpeg error: %w - %s", err, string(output))
 	}
 
 	return nil
 }
 
-// DetectNonSilentSegments detects silence in an audio file and returns the non-silent segments
-func DetectNonSilentSegments(audioPath string, minSilenceLen int, silenceThresh int) ([]AudioSegment, error) {
-	// Convert ms to seconds for FFmpeg
-	silenceLenSec := float64(minSilenceLen) / 1000.0
-
-	// Use FFmpeg's silencedetect filter to find silence periods
-	cmd := exec.Command("ffmpeg",
-		"-i", audioPath,
-		"-af", fmt.Sprintf("silencedetect=noise=%ddB:d=%.3f", silenceThresh, silenceLenSec),
-		"-f", "null", "-")
-
-	output, err := cmd.CombinedOutput()
+// DetectNonSilentSegments detects segments of audio that are not silent
+func DetectNonSilentSegments(audioPath string, minSilenceLen int, silenceThresh int) ([]types.AudioSegment, error) {
+	// Check if FFmpeg is available
+	_, err := exec.LookPath("ffmpeg")
 	if err != nil {
-		return nil, fmt.Errorf("failed to detect silence: %w - %s", err, string(output))
+		return nil, fmt.Errorf("ffmpeg not found in PATH: %w", err)
 	}
 
-	// Extract silence_start and silence_end times
-	silenceStarts, silenceEnds := parseSilenceOutput(string(output))
+	// Build ffmpeg command for silence detection
+	args := []string{
+		"-i", audioPath,
+		"-af", fmt.Sprintf("silencedetect=noise=%ddB:d=%.3f", silenceThresh, float64(minSilenceLen)/1000.0),
+		"-f", "null",
+		"-",
+	}
+	cmd := exec.Command("ffmpeg", args...)
 
-	// If no silence detected, return empty result
-	if len(silenceStarts) == 0 || len(silenceEnds) == 0 {
-		return []AudioSegment{}, nil
+	// Execute command and capture stderr
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+
+	// FFmpeg often exits with status 1 when using null output, ignore specific error
+	if err != nil && stderr.Len() == 0 { // Real error if stderr is empty
+		return nil, fmt.Errorf("ffmpeg execution failed: %w", err)
 	}
 
-	// Get total audio duration
+	// Parse stderr output for silence detection lines
+	scanner := bufio.NewScanner(&stderr)
+	var silenceIntervals [][2]float64
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		startMatch := silenceStartRegex.FindStringSubmatch(line)
+		endMatch := silenceEndRegex.FindStringSubmatch(line)
+
+		if len(startMatch) > 1 {
+			start, _ := strconv.ParseFloat(startMatch[1], 64)
+			silenceIntervals = append(silenceIntervals, [2]float64{start, -1.0}) // Mark end as unknown
+		} else if len(endMatch) > 1 && len(silenceIntervals) > 0 {
+			end, _ := strconv.ParseFloat(endMatch[1], 64)
+			if silenceIntervals[len(silenceIntervals)-1][1] == -1.0 { // Find corresponding start
+				silenceIntervals[len(silenceIntervals)-1][1] = end
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading ffmpeg output: %w", err)
+	}
+
+	// Get total duration of the audio
 	audioInfo, err := GetAudioInfo(audioPath)
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to get audio duration: %w", err)
 	}
-
 	totalDuration := audioInfo.Duration
 
-	// Create non-silent segments
-	var nonSilentSegments []AudioSegment
+	// Calculate non-silent segments based on silence intervals
+	var nonSilentSegments []types.AudioSegment // Use types.AudioSegment
+	lastEnd := 0.0
 
-	// First segment - from start to first silence
-	if silenceStarts[0] > 0 {
-		nonSilentSegments = append(nonSilentSegments, AudioSegment{
-			StartTime: 0,
-			EndTime:   silenceStarts[0],
-			Duration:  silenceStarts[0],
-		})
-	}
+	for _, interval := range silenceIntervals {
+		start := interval[0]
+		end := interval[1]
 
-	// Middle segments - between silences
-	for i := 0; i < len(silenceStarts)-1; i++ {
-		segmentStart := silenceEnds[i]
-		segmentEnd := silenceStarts[i+1]
-
-		// Skip very short segments
-		if segmentEnd-segmentStart < 0.5 {
-			continue
+		// Handle case where silence detection might be slightly off at the start
+		if start < lastEnd {
+			start = lastEnd
 		}
 
-		nonSilentSegments = append(nonSilentSegments, AudioSegment{
-			StartTime: segmentStart,
-			EndTime:   segmentEnd,
-			Duration:  segmentEnd - segmentStart,
-		})
+		// Ensure end is valid
+		if end < start {
+			// If end is invalid or not found, assume silence continues to the end
+			// This case should be rare with silencedetect but handled defensively
+			if lastEnd < start {
+				dur := start - lastEnd
+				if dur > 0.01 { // Avoid tiny segments
+					nonSilentSegments = append(nonSilentSegments, types.AudioSegment{
+						StartTime: lastEnd,
+						EndTime:   start,
+						Duration:  dur,
+					})
+				}
+			}
+			lastEnd = totalDuration // Skip the rest
+			break
+		}
+
+		// Add the non-silent segment before this silence interval
+		if start > lastEnd {
+			dur := start - lastEnd
+			if dur > 0.01 { // Avoid tiny segments due to float precision
+				nonSilentSegments = append(nonSilentSegments, types.AudioSegment{
+					StartTime: lastEnd,
+					EndTime:   start,
+					Duration:  dur,
+				})
+			}
+		}
+		lastEnd = end
 	}
 
-	// Last segment - from last silence to end
-	if len(silenceEnds) > 0 && silenceEnds[len(silenceEnds)-1] < totalDuration {
-		segmentStart := silenceEnds[len(silenceEnds)-1]
-		segmentEnd := totalDuration
-
-		nonSilentSegments = append(nonSilentSegments, AudioSegment{
-			StartTime: segmentStart,
-			EndTime:   segmentEnd,
-			Duration:  segmentEnd - segmentStart,
-		})
+	// Add the final non-silent segment after the last silence
+	if lastEnd < totalDuration {
+		dur := totalDuration - lastEnd
+		if dur > 0.01 { // Avoid tiny segments
+			nonSilentSegments = append(nonSilentSegments, types.AudioSegment{
+				StartTime: lastEnd,
+				EndTime:   totalDuration,
+				Duration:  dur,
+			})
+		}
 	}
 
 	return nonSilentSegments, nil
 }
 
 // ExtractAudioSegment extracts a segment from an audio file
-func ExtractAudioSegment(inputPath, outputPath string, startTime, endTime float64, audioInfo *AudioInfo) error {
+func ExtractAudioSegment(audioPath, outputPath string, startTime, endTime float64, audioInfo *types.AudioInfo) error {
 	// Ensure output directory exists
 	err := os.MkdirAll(filepath.Dir(outputPath), 0755)
 	if err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Build FFmpeg command with quality preservation
+	// Build FFmpeg command
 	args := []string{
-		"-i", inputPath,
+		"-i", audioPath,
 		"-ss", fmt.Sprintf("%.3f", startTime),
 		"-to", fmt.Sprintf("%.3f", endTime),
+		"-vn", // No video
 	}
 
-	// Add audio settings to preserve quality
+	// Preserve audio settings if info is provided
 	if audioInfo != nil {
-		// Use the same audio codec
 		if audioInfo.Codec != "" {
 			args = append(args, "-c:a", audioInfo.Codec)
 		}
-
-		// Preserve sample rate
 		if audioInfo.SampleRate > 0 {
 			args = append(args, "-ar", strconv.Itoa(audioInfo.SampleRate))
 		}
-
-		// Preserve channels
 		if audioInfo.Channels > 0 {
 			args = append(args, "-ac", strconv.Itoa(audioInfo.Channels))
 		}
+		if audioInfo.BitRate > 0 {
+			args = append(args, "-ab", fmt.Sprintf("%dk", audioInfo.BitRate))
+		}
 	} else {
-		// Use default high quality settings
-		args = append(args, "-c:a", "libmp3lame", "-q:a", "2")
+		// Default to copy codec if no info provided
+		args = append(args, "-c:a", "copy")
 	}
 
-	// Add output path
 	args = append(args, "-y", outputPath)
 
 	// Execute FFmpeg command
@@ -423,30 +326,39 @@ func ExtractAudioSegment(inputPath, outputPath string, startTime, endTime float6
 	return nil
 }
 
-// ConcatenateAudioSegments concatenates multiple audio segments into a single audio file
-func ConcatenateAudioSegments(segments []string, outputPath string, audioInfo *AudioInfo) error {
+// ConcatenateAudioSegments concatenates multiple audio segments into a single file
+func ConcatenateAudioSegments(segmentPaths []string, outputPath string, audioInfo *types.AudioInfo) error {
 	// Check if segments exist
-	if len(segments) == 0 {
+	if len(segmentPaths) == 0 {
 		return fmt.Errorf("no segments to concatenate")
 	}
 
 	// Create temporary file list
-	tempDir := os.TempDir()
-	fileListPath := filepath.Join(tempDir, "audio_segments_list.txt")
+	tempDir := filepath.Join(os.TempDir(), "audio_concat_"+time.Now().Format("20060102_150405"))
+	defer os.RemoveAll(tempDir)
+
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return fmt.Errorf("failed to create temporary directory: %w", err)
+	}
+	fileListPath := filepath.Join(tempDir, "segments_list.txt")
 
 	fileList, err := os.Create(fileListPath)
 	if err != nil {
 		return fmt.Errorf("failed to create file list: %w", err)
 	}
 	defer fileList.Close()
-	defer os.Remove(fileListPath)
 
 	// Write segment paths to file list
-	for _, segmentPath := range segments {
+	for _, segmentPath := range segmentPaths {
 		if _, err := os.Stat(segmentPath); os.IsNotExist(err) {
 			continue // Skip non-existent segments
 		}
-		fileList.WriteString(fmt.Sprintf("file '%s'\n", segmentPath))
+		// Use relative path if possible, otherwise absolute
+		relPath, relErr := filepath.Rel(tempDir, segmentPath)
+		if relErr != nil {
+			relPath = segmentPath // Use absolute if relative fails
+		}
+		fileList.WriteString(fmt.Sprintf("file '%s'\n", relPath))
 	}
 	fileList.Close()
 
@@ -458,46 +370,129 @@ func ConcatenateAudioSegments(segments []string, outputPath string, audioInfo *A
 	// Build FFmpeg command for concatenation
 	args := []string{
 		"-f", "concat",
-		"-safe", "0",
+		"-safe", "0", // Allow unsafe file paths
 		"-i", fileListPath,
+		"-vn", // No video
 	}
 
-	// Add audio settings to preserve quality
-	if audioInfo != nil {
-		// Use the same audio codec if available
-		if audioInfo.Codec != "" {
-			args = append(args, "-c:a", audioInfo.Codec)
-		} else {
-			args = append(args, "-c:a", "libmp3lame") // Default to MP3
-		}
-
-		// Preserve sample rate if available
-		if audioInfo.SampleRate > 0 {
-			args = append(args, "-ar", strconv.Itoa(audioInfo.SampleRate))
-		}
-
-		// Preserve channels if available
-		if audioInfo.Channels > 0 {
-			args = append(args, "-ac", strconv.Itoa(audioInfo.Channels))
-		}
-
-		// Set quality if using MP3
-		if audioInfo.Codec == "libmp3lame" {
-			args = append(args, "-q:a", "2") // High quality
-		}
+	// Add audio settings to preserve quality if possible
+	if audioInfo != nil && audioInfo.Codec != "" && IsCopyCompatibleCodec(audioInfo.Codec) {
+		args = append(args, "-c:a", "copy")
 	} else {
-		// Default high quality settings
-		args = append(args, "-c:a", "libmp3lame", "-q:a", "2")
+		// Re-encode if codec is not copy-compatible or info is missing
+		if audioInfo != nil {
+			if audioInfo.Codec != "" {
+				args = append(args, "-c:a", audioInfo.Codec)
+			}
+			if audioInfo.SampleRate > 0 {
+				args = append(args, "-ar", strconv.Itoa(audioInfo.SampleRate))
+			}
+			if audioInfo.Channels > 0 {
+				args = append(args, "-ac", strconv.Itoa(audioInfo.Channels))
+			}
+			if audioInfo.BitRate > 0 {
+				args = append(args, "-ab", fmt.Sprintf("%dk", audioInfo.BitRate))
+			}
+		} else {
+			// Sensible defaults if re-encoding without info
+			args = append(args, "-c:a", "libmp3lame", "-ab", "192k")
+		}
 	}
 
-	// Add output path
 	args = append(args, "-y", outputPath)
 
 	// Execute FFmpeg command
 	cmd := exec.Command("ffmpeg", args...)
+	cmd.Dir = tempDir // Run command from tempDir to handle relative paths correctly
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to concatenate segments: %w - %s", err, string(output))
+		return fmt.Errorf("FFmpeg concat error: %w - %s", err, string(output))
+	}
+
+	return nil
+}
+
+// concatenateAudioSegmentsWithConfig concatenates multiple audio segments with specific configuration
+func concatenateAudioSegmentsWithConfig(segmentPaths []string, outputPath string, config *types.AudioConfig) error {
+	// Check if segments exist
+	if len(segmentPaths) == 0 {
+		return fmt.Errorf("no segments to concatenate")
+	}
+
+	// Create temporary file list
+	tempDir := filepath.Join(os.TempDir(), "audio_concat_cfg_"+time.Now().Format("20060102_150405"))
+	defer os.RemoveAll(tempDir)
+
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return fmt.Errorf("failed to create temporary directory: %w", err)
+	}
+	fileListPath := filepath.Join(tempDir, "segments_list.txt")
+
+	fileList, err := os.Create(fileListPath)
+	if err != nil {
+		return fmt.Errorf("failed to create file list: %w", err)
+	}
+	defer fileList.Close()
+
+	// Write segment paths to file list
+	for _, segmentPath := range segmentPaths {
+		if _, err := os.Stat(segmentPath); os.IsNotExist(err) {
+			continue // Skip non-existent segments
+		}
+		relPath, relErr := filepath.Rel(tempDir, segmentPath)
+		if relErr != nil {
+			relPath = segmentPath // Use absolute if relative fails
+		}
+		fileList.WriteString(fmt.Sprintf("file '%s'\n", relPath))
+	}
+	fileList.Close()
+
+	// Create output directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Build FFmpeg command for concatenation with specific config
+	args := []string{
+		"-f", "concat",
+		"-safe", "0",
+		"-i", fileListPath,
+		"-vn", // No video
+	}
+
+	// Apply audio configuration
+	if config != nil {
+		if config.Codec != "" {
+			args = append(args, "-c:a", config.Codec)
+		} else {
+			args = append(args, "-c:a", "libmp3lame") // Default codec
+		}
+		if config.SampleRate > 0 {
+			args = append(args, "-ar", strconv.Itoa(config.SampleRate))
+		}
+		if config.Channels > 0 {
+			args = append(args, "-ac", strconv.Itoa(config.Channels))
+		}
+		if config.BitRate > 0 {
+			args = append(args, "-ab", fmt.Sprintf("%dk", config.BitRate))
+		} else if config.Quality > 0 { // Use VBR quality if bitrate not set
+			args = append(args, "-q:a", strconv.Itoa(config.Quality))
+		} else {
+			args = append(args, "-ab", "192k") // Default bitrate
+		}
+	} else {
+		// Default settings if no config provided
+		args = append(args, "-c:a", "libmp3lame", "-ab", "192k")
+	}
+
+	args = append(args, "-y", outputPath)
+
+	// Execute FFmpeg command
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Dir = tempDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("FFmpeg concat error: %w - %s", err, string(output))
 	}
 
 	return nil
@@ -507,53 +502,5 @@ func ConcatenateAudioSegments(segments []string, outputPath string, audioInfo *A
 * Helpers
  */
 
-// parseSilenceOutput parses FFmpeg silence detection output
-func parseSilenceOutput(output string) ([]float64, []float64) {
-	// Extract silence_start times
-	startRegex := regexp.MustCompile(`silence_start: ([0-9.]+)`)
-	startMatches := startRegex.FindAllStringSubmatch(output, -1)
-
-	// Extract silence_end times
-	endRegex := regexp.MustCompile(`silence_end: ([0-9.]+)`)
-	endMatches := endRegex.FindAllStringSubmatch(output, -1)
-
-	// Convert to float arrays
-	var starts, ends []float64
-
-	for _, match := range startMatches {
-		if len(match) > 1 {
-			time, err := strconv.ParseFloat(match[1], 64)
-			if err == nil {
-				starts = append(starts, time)
-			}
-		}
-	}
-
-	for _, match := range endMatches {
-		if len(match) > 1 {
-			time, err := strconv.ParseFloat(match[1], 64)
-			if err == nil {
-				ends = append(ends, time)
-			}
-		}
-	}
-
-	return starts, ends
-}
-
-// copyAudioFile copies a file from src to dst
-func copyAudioFile(src, dst string) error {
-	// Ensure output directory exists
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
-	}
-
-	// Use FFmpeg for copying to handle audio files properly
-	cmd := exec.Command("ffmpeg", "-i", src, "-c", "copy", "-y", dst)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to copy file: %w - %s", err, string(output))
-	}
-
-	return nil
-}
+var silenceStartRegex = regexp.MustCompile(`silence_start: (\d+\.?\d*)`)
+var silenceEndRegex = regexp.MustCompile(`silence_end: (\d+\.?\d*)`) // Adjusted regex
