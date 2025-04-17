@@ -1,4 +1,4 @@
-package ffmpego
+package types
 
 // Constants for video quality (CRF)
 const (

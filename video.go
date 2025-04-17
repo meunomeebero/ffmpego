@@ -10,85 +10,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/meunomeebero/ffmpego/internal/types" // Import internal types
+	"github.com/meunomeebero/ffmpego/video"          // Import video sub-package
 )
 
-// GetVideoInfo retrieves information about a video file
-func GetVideoInfo(videoPath string) (*VideoInfo, error) {
-	// Check if FFprobe is available
-	_, err := exec.LookPath("ffprobe")
-	if err != nil {
-		return nil, fmt.Errorf("ffprobe not found in PATH: %w", err)
-	}
-
-	// Get video stream information
-	cmd := exec.Command("ffprobe",
-		"-v", "error",
-		"-select_streams", "v:0",
-		"-show_entries", "stream=width,height,r_frame_rate,codec_name,pix_fmt",
-		"-show_entries", "format=duration",
-		"-of", "default=noprint_wrappers=1",
-		videoPath)
-
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get video info: %w", err)
-	}
-
-	// Parse output
-	info := &VideoInfo{}
-	lines := strings.Split(string(output), "\n")
-
-	for _, line := range lines {
-		if strings.HasPrefix(line, "width=") {
-			widthStr := strings.TrimPrefix(line, "width=")
-			info.Width, _ = strconv.Atoi(widthStr)
-		} else if strings.HasPrefix(line, "height=") {
-			heightStr := strings.TrimPrefix(line, "height=")
-			info.Height, _ = strconv.Atoi(heightStr)
-		} else if strings.HasPrefix(line, "r_frame_rate=") {
-			frStr := strings.TrimPrefix(line, "r_frame_rate=")
-			frParts := strings.Split(frStr, "/")
-			if len(frParts) == 2 {
-				num, _ := strconv.ParseFloat(frParts[0], 64)
-				den, _ := strconv.ParseFloat(frParts[1], 64)
-				if den > 0 {
-					info.FrameRate = num / den
-				}
-			}
-		} else if strings.HasPrefix(line, "codec_name=") {
-			info.VideoCodec = strings.TrimPrefix(line, "codec_name=")
-		} else if strings.HasPrefix(line, "duration=") {
-			durStr := strings.TrimPrefix(line, "duration=")
-			info.Duration, _ = strconv.ParseFloat(durStr, 64)
-		} else if strings.HasPrefix(line, "pix_fmt=") {
-			info.PixelFormat = strings.TrimPrefix(line, "pix_fmt=")
-		}
-	}
-
-	// Get audio codec info
-	cmd = exec.Command("ffprobe",
-		"-v", "error",
-		"-select_streams", "a:0",
-		"-show_entries", "stream=codec_name",
-		"-of", "default=noprint_wrappers=1",
-		videoPath)
-
-	output, err = cmd.Output()
-	if err == nil {
-		lines = strings.Split(string(output), "\n")
-		for _, line := range lines {
-			if strings.HasPrefix(line, "codec_name=") {
-				info.AudioCodec = strings.TrimPrefix(line, "codec_name=")
-				break
-			}
-		}
-	}
-
-	return info, nil
-}
-
 // RemoveVideoSilence processes a video file by removing silent parts
-func RemoveVideoSilence(videoPath, outputPath string, minSilenceLen int, silenceThresh int, config *VideoConfig, logger Logger) error {
+func RemoveVideoSilence(videoPath, outputPath string, minSilenceLen int, silenceThresh int, config *types.VideoConfig, logger Logger) error {
 	// Create temporary directories
 	tempDir := filepath.Join(os.TempDir(), "video_processor_"+time.Now().Format("20060102_150405"))
 	audioDir := filepath.Join(tempDir, "audio")
@@ -109,7 +37,7 @@ func RemoveVideoSilence(videoPath, outputPath string, minSilenceLen int, silence
 	logger.Section("Analyzing Video")
 	logger.Step("Getting video information")
 
-	videoInfo, err := GetVideoInfo(videoPath)
+	videoInfo, err := video.GetInfo(videoPath)
 	if err != nil {
 		return fmt.Errorf("failed to get video info: %w", err)
 	}
@@ -133,7 +61,8 @@ func RemoveVideoSilence(videoPath, outputPath string, minSilenceLen int, silence
 	logger.Section("Analyzing Audio")
 	logger.Step("Detecting silence in audio")
 
-	audioSegments, err := DetectNonSilentSegments(audioPath, minSilenceLen, silenceThresh)
+	var audioSegments []types.AudioSegment
+	audioSegments, err = DetectNonSilentSegments(audioPath, minSilenceLen, silenceThresh)
 
 	if err != nil {
 		return fmt.Errorf("failed to detect silence: %w", err)
@@ -165,7 +94,7 @@ func RemoveVideoSilence(videoPath, outputPath string, minSilenceLen int, silence
 	// Create job and result channels
 	type job struct {
 		index   int
-		segment AudioSegment
+		segment types.AudioSegment
 	}
 
 	type result struct {
@@ -273,7 +202,7 @@ func RemoveVideoSilence(videoPath, outputPath string, minSilenceLen int, silence
 }
 
 // ExtractVideoSegment extracts a segment from a video file
-func ExtractVideoSegment(videoPath, outputPath string, startTime, endTime float64, videoInfo *VideoInfo) error {
+func ExtractVideoSegment(videoPath, outputPath string, startTime, endTime float64, videoInfo *types.VideoInfo) error {
 	// Ensure output directory exists
 	err := os.MkdirAll(filepath.Dir(outputPath), 0755)
 	if err != nil {
@@ -333,7 +262,7 @@ func ExtractVideoSegment(videoPath, outputPath string, startTime, endTime float6
 }
 
 // ConcatenateVideoSegments concatenates multiple video segments into a single video
-func ConcatenateVideoSegments(segmentPaths []string, outputPath string, videoInfo *VideoInfo) error {
+func ConcatenateVideoSegments(segmentPaths []string, outputPath string, videoInfo *types.VideoInfo) error {
 	// Check if segments exist
 	if len(segmentPaths) == 0 {
 		return fmt.Errorf("no segments to concatenate")
@@ -376,7 +305,7 @@ func ConcatenateVideoSegments(segmentPaths []string, outputPath string, videoInf
 		// Use specified video codec if available
 		if videoInfo.VideoCodec != "" {
 			// Check if the codec is a copy-compatible codec
-			if isCopyCompatibleCodec(videoInfo.VideoCodec) {
+			if IsCopyCompatibleCodec(videoInfo.VideoCodec) {
 				args = append(args, "-c:v", "copy")
 			} else {
 				args = append(args, "-c:v", videoInfo.VideoCodec)
@@ -403,7 +332,7 @@ func ConcatenateVideoSegments(segmentPaths []string, outputPath string, videoInf
 		// Preserve audio codec
 		if videoInfo.AudioCodec != "" {
 			// Check if the codec is a copy-compatible codec
-			if isCopyCompatibleCodec(videoInfo.AudioCodec) {
+			if IsCopyCompatibleCodec(videoInfo.AudioCodec) {
 				args = append(args, "-c:a", "copy")
 			} else {
 				args = append(args, "-c:a", videoInfo.AudioCodec)
@@ -430,7 +359,7 @@ func ConcatenateVideoSegments(segmentPaths []string, outputPath string, videoInf
 }
 
 // ResizeVideo resizes a video according to the specified configuration
-func ConvertVideo(inputPath, outputPath string, videoInfo *VideoInfo, config *VideoConfig) error {
+func ConvertVideo(inputPath, outputPath string, videoInfo *types.VideoInfo, config *types.VideoConfig) error {
 	// Ensure output directory exists
 	err := os.MkdirAll(filepath.Dir(outputPath), 0755)
 	if err != nil {
@@ -516,7 +445,7 @@ func ConvertVideo(inputPath, outputPath string, videoInfo *VideoInfo, config *Vi
  */
 
 // concatenateVideoSegmentsWithConfig concatenates multiple video segments into a single video with configuration
-func concatenateVideoSegmentsWithConfig(segmentPaths []string, outputPath string, videoInfo *VideoInfo, config *VideoConfig) error {
+func concatenateVideoSegmentsWithConfig(segmentPaths []string, outputPath string, videoInfo *types.VideoInfo, config *types.VideoConfig) error {
 	// Check if segments exist
 	if len(segmentPaths) == 0 {
 		return fmt.Errorf("no segments to concatenate")
@@ -652,23 +581,6 @@ func parseResolution(resolution string) string {
 	return fmt.Sprintf("%dx%d", width, height)
 }
 
-// isCopyCompatibleCodec checks if a codec can be used with -c copy
-func isCopyCompatibleCodec(codec string) bool {
-	// Common copy-compatible video codecs
-	copyCompatibleCodecs := []string{
-		"h264", "h265", "hevc", "vp8", "vp9", "av1", "mjpeg", "mpeg4", "libx264", "libx265",
-		"aac", "mp3", "opus", "vorbis", "flac", "pcm_s16le", "pcm_s24le", "pcm_f32le",
-	}
-
-	for _, c := range copyCompatibleCodecs {
-		if strings.Contains(codec, c) {
-			return true
-		}
-	}
-
-	return false
-}
-
 // copyVideoFile copies a file from src to dst
 func copyVideoFile(src, dst string) error {
 	// Ensure output directory exists
@@ -687,7 +599,7 @@ func copyVideoFile(src, dst string) error {
 }
 
 // extractVideoSegmentWithConfig extracts a segment from a video file with configuration options
-func extractVideoSegmentWithConfig(videoPath, outputPath string, startTime, endTime float64, videoInfo *VideoInfo, config *VideoConfig) error {
+func extractVideoSegmentWithConfig(videoPath, outputPath string, startTime, endTime float64, videoInfo *types.VideoInfo, config *types.VideoConfig) error {
 	// Ensure output directory exists
 	err := os.MkdirAll(filepath.Dir(outputPath), 0755)
 	if err != nil {
