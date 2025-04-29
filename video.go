@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -158,7 +157,7 @@ func RemoveVideoSilence(videoPath, outputPath string, minSilenceLen int, silence
 	logger.Info("Extracting %d video segments", len(audioSegments))
 
 	// Determine the number of workers based on CPU cores
-	numWorkers := min(min(runtime.NumCPU(), 8), len(audioSegments))
+	numWorkers := min(20, len(audioSegments))
 
 	logger.Info("Using %d parallel workers", numWorkers)
 
