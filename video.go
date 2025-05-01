@@ -364,7 +364,7 @@ func ConcatenateVideoSegments(segmentPaths []string, outputPath string, videoInf
 			continue // Skip non-existent segments
 		}
 		// Use the absolute path in the file list
-		fileList.WriteString(fmt.Sprintf("file '%s'\\n", absSegmentPath))
+		fileList.WriteString(fmt.Sprintf("file '%s'\n", absSegmentPath))
 	}
 	fileList.Close() // Close the file explicitly after writing
 
@@ -568,7 +568,7 @@ func concatenateVideoSegmentsWithConfig(segmentPaths []string, outputPath string
 			continue // Skip non-existent segments
 		}
 		// Use the absolute path in the file list
-		fileList.WriteString(fmt.Sprintf("file '%s'\\n", absSegmentPath))
+		fileList.WriteString(fmt.Sprintf("file '%s'\n", absSegmentPath))
 	}
 	fileList.Close() // Close the file explicitly after writing
 
