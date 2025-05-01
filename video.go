@@ -351,12 +351,33 @@ func ConcatenateVideoSegments(segmentPaths []string, outputPath string, videoInf
 
 	// Write segment paths to file list
 	for _, segmentPath := range segmentPaths {
-		if _, err := os.Stat(segmentPath); os.IsNotExist(err) {
+		// Ensure the path written to the list is absolute
+		absSegmentPath, err := filepath.Abs(segmentPath)
+		if err != nil {
+			// Log or handle the error, maybe skip the segment
+			fmt.Printf("Warning: could not get absolute path for %s: %v\n", segmentPath, err)
+			continue
+		}
+
+		if _, err := os.Stat(absSegmentPath); os.IsNotExist(err) {
+			fmt.Printf("Warning: segment file does not exist: %s\n", absSegmentPath)
 			continue // Skip non-existent segments
 		}
-		fileList.WriteString(fmt.Sprintf("file '%s'\n", segmentPath))
+		// Use the absolute path in the file list
+		fileList.WriteString(fmt.Sprintf("file '%s'\\n", absSegmentPath))
 	}
-	fileList.Close()
+	fileList.Close() // Close the file explicitly after writing
+
+	// Check if the file list is empty after processing paths
+	info, err := os.Stat(fileListPath)
+	if err != nil {
+		// Handle error if stat fails unexpectedly, though unlikely if creation succeeded
+		return fmt.Errorf("failed to stat file list '%s': %w", fileListPath, err)
+	}
+	if info.Size() == 0 {
+		// If no valid segments were written, return an error or handle appropriately
+		return fmt.Errorf("no valid segments found to concatenate after checking paths")
+	}
 
 	// Create output directory if it doesn't exist
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
@@ -534,12 +555,33 @@ func concatenateVideoSegmentsWithConfig(segmentPaths []string, outputPath string
 
 	// Write segment paths to file list
 	for _, segmentPath := range segmentPaths {
-		if _, err := os.Stat(segmentPath); os.IsNotExist(err) {
+		// Ensure the path written to the list is absolute
+		absSegmentPath, err := filepath.Abs(segmentPath)
+		if err != nil {
+			// Log or handle the error, maybe skip the segment
+			fmt.Printf("Warning: could not get absolute path for %s: %v\n", segmentPath, err)
+			continue
+		}
+
+		if _, err := os.Stat(absSegmentPath); os.IsNotExist(err) {
+			fmt.Printf("Warning: segment file does not exist: %s\n", absSegmentPath)
 			continue // Skip non-existent segments
 		}
-		fileList.WriteString(fmt.Sprintf("file '%s'\n", segmentPath))
+		// Use the absolute path in the file list
+		fileList.WriteString(fmt.Sprintf("file '%s'\\n", absSegmentPath))
 	}
-	fileList.Close()
+	fileList.Close() // Close the file explicitly after writing
+
+	// Check if the file list is empty after processing paths
+	info, err := os.Stat(fileListPath)
+	if err != nil {
+		// Handle error if stat fails unexpectedly, though unlikely if creation succeeded
+		return fmt.Errorf("failed to stat file list '%s': %w", fileListPath, err)
+	}
+	if info.Size() == 0 {
+		// If no valid segments were written, return an error or handle appropriately
+		return fmt.Errorf("no valid segments found to concatenate after checking paths")
+	}
 
 	// Create output directory if it doesn't exist
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
