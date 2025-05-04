@@ -184,11 +184,17 @@ func RemoveAudioSilence(audioPath, outputPath string, minSilenceLen int, silence
 		}
 
 		segmentPaths[i] = segmentPath
-		fileList.WriteString(fmt.Sprintf("file '%s'\n", segmentPath))
+		// Ensure the path written to the list is absolute
+		absSegmentPath, err := filepath.Abs(segmentPath)
+		if err != nil {
+			logger.Error("Failed to get absolute path for segment %d: %s", i+1, err)
+			continue // Skip this segment
+		}
+		fileList.WriteString(fmt.Sprintf("file '%s'\\n", absSegmentPath)) // Use absolute path
 		logger.Success("Segment %d/%d processed successfully", i+1, len(audioSegments))
 	}
 
-	fileList.Close()
+	fileList.Close() // Close explicitly after writing all paths
 
 	// Filter out any failed segments
 	validSegmentCount := 0
@@ -443,12 +449,29 @@ func ConcatenateAudioSegments(segments []string, outputPath string, audioInfo *A
 
 	// Write segment paths to file list
 	for _, segmentPath := range segments {
-		if _, err := os.Stat(segmentPath); os.IsNotExist(err) {
+		// Ensure the path written to the list is absolute
+		absSegmentPath, err := filepath.Abs(segmentPath)
+		if err != nil {
+			// Log or handle the error, maybe skip the segment
+			fmt.Printf("Warning: could not get absolute path for %s: %v\n", segmentPath, err)
+			continue
+		}
+		if _, err := os.Stat(absSegmentPath); os.IsNotExist(err) {
+			fmt.Printf("Warning: audio segment file does not exist: %s\n", absSegmentPath)
 			continue // Skip non-existent segments
 		}
-		fileList.WriteString(fmt.Sprintf("file '%s'\n", segmentPath))
+		fileList.WriteString(fmt.Sprintf("file '%s'\n", absSegmentPath)) // Use absolute path
 	}
-	fileList.Close()
+	fileList.Close() // Close explicitly after writing
+
+	// Check if the file list is empty after processing paths
+	info, err := os.Stat(fileListPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat file list '%s': %w", fileListPath, err)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("no valid audio segments found to concatenate after checking paths")
+	}
 
 	// Create output directory if it doesn't exist
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
