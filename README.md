@@ -1,260 +1,459 @@
-# ffmpego
+# 🎬 FFmpego
 
-ffmpego is a Go wrapper library for [FFmpeg](https://ffmpeg.org/), facilitating common audio and video manipulation operations through a simple and intuitive API.
+> A friendly, easy-to-use Go library for working with video and audio files powered by FFmpeg
 
-## Requirements
+[![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.20-blue)](https://go.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-- [FFmpeg](https://ffmpeg.org/) installed and available in the system PATH
-- Go 1.20 or higher
+FFmpego makes video and audio processing simple and intuitive. Whether you're a beginner or an experienced developer, you can start working with media files in just a few lines of code!
 
-## Installation
+---
+
+## 📋 Table of Contents
+
+- [✨ Features](#-features)
+- [🚀 Quick Start](#-quick-start)
+- [📦 Installation](#-installation)
+- [🎯 Basic Usage](#-basic-usage)
+- [📖 Complete API Reference](#-complete-api-reference)
+- [🎓 Examples](#-examples)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
+
+---
+
+## ✨ Features
+
+- 🎥 **Video Processing** - Get info, convert formats, extract segments
+- 🎵 **Audio Processing** - Manipulate audio files with ease
+- 🔇 **Silence Detection** - Automatically detect silent parts in media
+- ✂️ **Segment Extraction** - Cut specific parts from your files
+- 🔗 **Concatenation** - Join multiple files together
+- 🎨 **Format Conversion** - Convert between different formats and qualities
+- 🎯 **Simple API** - Designed for developers of all skill levels
+- 📱 **Aspect Ratio Support** - Easy conversion for different screen sizes (16:9, 9:16, etc.)
+
+---
+
+## 🚀 Quick Start
+
+Here's how to get video information in just 3 lines:
+
+```go
+v, _ := video.New("my-video.mp4")
+info, _ := v.GetInfo()
+fmt.Printf("Video: %dx%d, %.2f fps\n", info.Width, info.Height, info.FrameRate)
+```
+
+That's it! 🎉
+
+---
+
+## 📦 Installation
+
+### Step 1: Install FFmpeg
+
+FFmpego uses [FFmpeg](https://ffmpeg.org/) under the hood, so you need it installed first:
+
+**macOS:**
+```bash
+brew install ffmpeg
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install ffmpeg
+```
+
+**Windows:**
+Download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to your PATH.
+
+### Step 2: Install FFmpego
 
 ```bash
 go get github.com/meunomeebero/ffmpego
 ```
 
-## Basic Usage
+---
 
-### Initialization
+## 🎯 Basic Usage
 
-```go
-import "github.com/meunomeebero/ffmpego"
-
-// Initialize with default logger
-ffmpeg := ffmpego.New()
-
-// Or with custom logger
-logger := ffmpego.NewDefaultLogger(os.Stdout)
-ffmpeg := ffmpego.NewWithLogger(logger)
-```
-
-### Get Video Information
+### Working with Videos 🎥
 
 ```go
-videoInfo, err := ffmpeg.Video.GetInfo("video.mp4")
+import "github.com/meunomeebero/ffmpego/video"
+
+// Open a video file
+v, err := video.New("input.mp4")
 if err != nil {
-    log.Fatalf("Error getting information: %v", err)
+    log.Fatal(err)
 }
 
-fmt.Printf("Resolution: %dx%d\n", videoInfo.Width, videoInfo.Height)
-fmt.Printf("Duration: %.2f seconds\n", videoInfo.Duration)
-fmt.Printf("FPS: %.2f\n", videoInfo.FrameRate)
+// Get video information
+info, _ := v.GetInfo()
+fmt.Printf("Resolution: %dx%d\n", info.Width, info.Height)
+fmt.Printf("Duration: %.2f seconds\n", info.Duration)
+fmt.Printf("Frame Rate: %.2f fps\n", info.FrameRate)
+
+// Detect silent parts (great for removing boring silence from videos!)
+silenceConfig := video.SilenceConfig{
+    MinSilenceDuration: 700,  // 700 milliseconds
+    SilenceThreshold:   -30,  // -30 decibels
+}
+segments, _ := v.DetectSilence(silenceConfig)
+fmt.Printf("Found %d parts with audio\n", len(segments))
+
+// Extract a specific part (from 10 to 30 seconds)
+v.ExtractSegment("clip.mp4", 10.0, 30.0, nil)
+
+// Convert to a different format
+config := video.ConvertConfig{
+    Resolution:  "1920x1080",           // Full HD
+    AspectRatio: video.AspectRatio16x9, // Widescreen
+    VideoCodec:  video.CodecH264,       // Most compatible format
+    Quality:     23,                     // Good quality (lower = better)
+}
+v.Convert("output.mp4", config)
 ```
 
-### Convert Video
+### Working with Audio 🎵
 
 ```go
-config := &ffmpego.VideoConfig{
-    TargetResolution: ffmpego.ResolutionHD,     // 1280x720
-    VideoCodec:       ffmpego.VideoCodecH264,   // H.264
-    CRF:              ffmpego.VideoQualityHigh, // 23 - High quality
-    Preset:           ffmpego.PresetMedium,     // Medium preset
+import "github.com/meunomeebero/ffmpego/audio"
+
+// Open an audio file
+a, err := audio.New("song.mp3")
+if err != nil {
+    log.Fatal(err)
 }
 
-err := ffmpeg.Video.Convert("input.mp4", "output.mp4", config)
-if err != nil {
-    log.Fatalf("Error converting video: %v", err)
+// Get audio information
+info, _ := a.GetInfo()
+fmt.Printf("Sample Rate: %d Hz\n", info.SampleRate)
+fmt.Printf("Channels: %d\n", info.Channels)
+fmt.Printf("Duration: %.2f seconds\n", info.Duration)
+
+// Detect silent parts
+silenceConfig := audio.SilenceConfig{
+    MinSilenceDuration: 500,  // 500ms
+    SilenceThreshold:   -40,  // -40dB
 }
+segments, _ := a.DetectSilence(silenceConfig)
+
+// Extract a portion of the audio
+a.ExtractSegment("clip.mp3", 10.0, 30.0, nil)
+
+// Convert to high quality
+config := audio.ConvertConfig{
+    SampleRate: audio.SampleRate48000, // Professional quality
+    Channels:   2,                      // Stereo
+    Codec:      audio.CodecAAC,         // Modern, efficient format
+    Quality:    2,                      // High quality
+    Bitrate:    320,                    // 320 kbps
+}
+a.Convert("output.m4a", config)
 ```
 
-### Detect Non-Silent Segments in Audio
+### Joining Multiple Files 🔗
 
 ```go
-// Define silence detection parameters
-minSilenceLen := ffmpego.SilenceDurationMedium  // 700ms
-silenceThresh := ffmpego.SilenceThresholdDefault  // -30 dB
+// Combine video segments
+video.ConcatenateSegments([]string{
+    "part1.mp4",
+    "part2.mp4",
+    "part3.mp4",
+}, "final-video.mp4", nil)
 
-// Detect segments with audio content (non-silent)
-segments, err := ffmpeg.Audio.DetectNonSilentSegments("input.mp3", minSilenceLen, silenceThresh)
-if err != nil {
-    log.Fatalf("Error detecting non-silent segments: %v", err)
-}
-
-// Print information about each segment
-for i, segment := range segments {
-    fmt.Printf("Segment %d: %.2fs - %.2fs (duration: %.2fs)\n", 
-        i+1, segment.StartTime, segment.EndTime, segment.Duration)
-}
+// Combine audio files
+audio.ConcatenateSegments([]string{
+    "intro.mp3",
+    "main.mp3",
+    "outro.mp3",
+}, "complete-audio.mp3", nil)
 ```
 
-### Remove Silence from Audio
+---
+
+## 📖 Complete API Reference
+
+### Video Functions
+
+#### `video.New(path string) (*Video, error)`
+Opens a video file for processing.
+
+**Example:**
+```go
+v, err := video.New("my-video.mp4")
+```
+
+---
+
+#### `v.GetInfo() (*Info, error)`
+Gets detailed information about the video file.
+
+**Returns:**
+- Width and Height (in pixels)
+- Duration (in seconds)
+- Frame Rate ([FPS](https://en.wikipedia.org/wiki/Frame_rate))
+- [Codec](https://en.wikipedia.org/wiki/Video_codec) information
+- File size
+
+**Example:**
+```go
+info, _ := v.GetInfo()
+fmt.Printf("Video is %dx%d\n", info.Width, info.Height)
+```
+
+---
+
+#### `v.DetectSilence(config SilenceConfig) ([]Segment, error)`
+Finds all the parts of the video that have sound (non-silent segments).
+
+**Useful for:** Automatically removing silent parts from recordings, lectures, or podcasts.
+
+**Example:**
+```go
+config := video.SilenceConfig{
+    MinSilenceDuration: 700,  // Silence must be at least 700ms
+    SilenceThreshold:   -30,  // Volume below -30dB is considered silence
+}
+segments, _ := v.DetectSilence(config)
+```
+
+---
+
+#### `v.ExtractSegment(outputPath string, startTime, endTime float64, config *ConvertConfig) error`
+Cuts out a specific portion of the video.
+
+**Example:**
+```go
+// Extract from 1 minute 30 seconds to 2 minutes
+v.ExtractSegment("clip.mp4", 90.0, 120.0, nil)
+```
+
+---
+
+#### `v.Convert(outputPath string, config ConvertConfig) error`
+Converts the video to a different format, quality, or size.
+
+**Example:**
+```go
+config := video.ConvertConfig{
+    Resolution:  "1280x720",            // HD resolution
+    AspectRatio: video.AspectRatio16x9, // Widescreen format
+    Quality:     23,                     // Good quality
+}
+v.Convert("converted.mp4", config)
+```
+
+---
+
+#### `video.ConcatenateSegments(segments []string, outputPath string, config *ConvertConfig) error`
+Joins multiple video files into one.
+
+**Example:**
+```go
+video.ConcatenateSegments([]string{
+    "intro.mp4",
+    "main-content.mp4",
+    "outro.mp4",
+}, "final.mp4", nil)
+```
+
+---
+
+### Audio Functions
+
+#### `audio.New(path string) (*Audio, error)`
+Opens an audio file for processing.
+
+---
+
+#### `a.GetInfo() (*Info, error)`
+Gets detailed information about the audio file.
+
+**Returns:**
+- [Sample Rate](https://en.wikipedia.org/wiki/Sampling_(signal_processing)) (quality of the audio)
+- Channels (mono, stereo, etc.)
+- Duration
+- [Codec](https://en.wikipedia.org/wiki/Audio_codec)
+- [Bitrate](https://en.wikipedia.org/wiki/Bit_rate) (quality metric)
+
+---
+
+#### `a.DetectSilence(config SilenceConfig) ([]Segment, error)`
+Finds all the parts of the audio that have sound.
+
+---
+
+#### `a.ExtractSegment(outputPath string, startTime, endTime float64, config *ConvertConfig) error`
+Cuts out a specific portion of the audio.
+
+---
+
+#### `a.Convert(outputPath string, config ConvertConfig) error`
+Converts the audio to a different format or quality.
+
+---
+
+#### `audio.ConcatenateSegments(segments []string, outputPath string, config *ConvertConfig) error`
+Joins multiple audio files into one.
+
+---
+
+## 🎛️ Configuration Options
+
+### Video Configuration
 
 ```go
-silenceConfig := ffmpego.SilenceConfig{
-    MinSilenceLen: ffmpego.SilenceDurationMedium,    // 700ms
-    SilenceThresh: ffmpego.SilenceThresholdDefault,  // -30 dB
-}
-
-audioConfig := &ffmpego.AudioConfig{
-    Codec:      ffmpego.AudioCodecMP3,     // MP3
-    Quality:    ffmpego.AudioQualityHigh,  // High quality
-    SampleRate: 44100,                     // 44.1kHz
-}
-
-err := ffmpeg.Audio.RemoveSilence("input.mp3", "output.mp3", silenceConfig, audioConfig)
-if err != nil {
-    log.Fatalf("Error removing silence: %v", err)
+type ConvertConfig struct {
+    Resolution  string      // Example: "1920x1080", "1280x720"
+    AspectRatio AspectRatio // Screen format (see below)
+    FrameRate   float64     // Frames per second (30, 60, etc.)
+    VideoCodec  string      // Video compression format
+    AudioCodec  string      // Audio compression format
+    Quality     int         // 0-51 (lower = better quality, bigger file)
+    Preset      string      // Encoding speed (see below)
+    Bitrate     int         // Quality in kbps
 }
 ```
 
-### Remove Silence from Video
+**Common [Codecs](https://en.wikipedia.org/wiki/Video_codec):**
+- `video.CodecH264` - H.264 (most compatible, works everywhere)
+- `video.CodecH265` - H.265 (smaller files, newer)
+- `video.CodecVP9` - VP9 (great for web)
+
+**Encoding Presets:**
+- `video.PresetUltrafast` - Very fast, larger files
+- `video.PresetFast` - Fast encoding
+- `video.PresetMedium` - Balanced (recommended)
+- `video.PresetSlow` - Slow, better quality
+
+**[Aspect Ratios](https://en.wikipedia.org/wiki/Aspect_ratio_(image)):**
+- `video.AspectRatio16x9` - Widescreen (YouTube, TV)
+- `video.AspectRatio9x16` - Vertical (Instagram Stories, TikTok)
+- `video.AspectRatio4x3` - Old TV format
+- `video.AspectRatio1x1` - Square (Instagram posts)
+- `video.AspectRatio21x9` - Ultra-wide (cinema)
+
+---
+
+### Audio Configuration
 
 ```go
-silenceConfig := ffmpego.SilenceConfig{
-    MinSilenceLen: ffmpego.SilenceDurationMedium,    // 700ms
-    SilenceThresh: ffmpego.SilenceThresholdDefault,  // -30 dB
-}
-
-videoConfig := &ffmpego.VideoConfig{
-    VideoCodec: ffmpego.VideoCodecH264,    // H.264
-    CRF:        ffmpego.VideoQualityHigh,  // High quality
-    Preset:     ffmpego.PresetMedium,      // Medium preset
-}
-
-err := ffmpeg.Video.RemoveSilence("input.mp4", "output.mp4", silenceConfig, videoConfig)
-if err != nil {
-    log.Fatalf("Error removing silence: %v", err)
+type ConvertConfig struct {
+    SampleRate int    // Quality (44100, 48000 Hz)
+    Channels   int    // 1 = mono, 2 = stereo
+    Codec      string // Compression format
+    Quality    int    // 0-9 (lower = better)
+    Bitrate    int    // Quality in kbps
 }
 ```
 
-### Extract Audio from Video
+**Common [Codecs](https://en.wikipedia.org/wiki/Audio_codec):**
+- `audio.CodecAAC` - AAC (modern, efficient)
+- `audio.CodecMP3` - MP3 (universal compatibility)
+- `audio.CodecFLAC` - FLAC (no quality loss, big files)
+- `audio.CodecOpus` - Opus (best for voice)
 
-```go
-err := ffmpeg.Audio.ExtractFromVideo("input.mp4", "output.mp3")
-if err != nil {
-    log.Fatalf("Error extracting audio: %v", err)
-}
+**[Sample Rates](https://en.wikipedia.org/wiki/Sampling_(signal_processing)):**
+- `audio.SampleRate44100` - CD quality (44.1 kHz)
+- `audio.SampleRate48000` - Professional audio (48 kHz)
+
+---
+
+## 🎓 Examples
+
+Check out the [`examples/`](examples/) folder for complete, working examples including:
+
+1. 📊 Getting video information
+2. 🔇 Detecting and working with silence
+3. 🎨 Converting videos to different formats
+4. 📱 Creating vertical videos (for mobile)
+5. 🎵 Audio processing and conversion
+6. ✂️ Extracting segments
+7. 🔗 Joining multiple files
+
+Each example is fully documented and ready to run!
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions from developers of all skill levels! Here's how you can help:
+
+### 🐛 Found a Bug?
+
+1. Check if it's already reported in [Issues](https://github.com/meunomeebero/ffmpego/issues)
+2. If not, create a new issue with:
+   - A clear title
+   - Steps to reproduce the problem
+   - What you expected to happen
+   - What actually happened
+
+### 💡 Have a Feature Idea?
+
+Open an issue with the tag `enhancement` and describe:
+- What you want to do
+- Why it would be useful
+- How you imagine it would work
+
+### 🔧 Want to Contribute Code?
+
+1. **Fork the repository** - Click the "Fork" button at the top right
+2. **Create a branch** - `git checkout -b feature/my-new-feature`
+3. **Make your changes** - Write clean, documented code
+4. **Test your changes** - Make sure everything works
+5. **Commit your changes** - `git commit -am 'Add some feature'`
+6. **Push to the branch** - `git push origin feature/my-new-feature`
+7. **Create a Pull Request** - Describe what you changed and why
+
+### 📝 Code Guidelines
+
+- Write simple, clear code that beginners can understand
+- Add comments to explain complex parts
+- Follow Go's standard formatting (`gofmt`)
+- Keep functions small and focused on one task
+- Add examples for new features
+
+### 🧪 Running Tests
+
+```bash
+go test ./...
 ```
 
-### Extract Video Segment
+### 💬 Questions?
 
-```go
-// Get video info first to preserve quality settings
-videoInfo, err := ffmpeg.Video.GetInfo("input.mp4")
-if err != nil {
-    log.Fatalf("Error getting video info: %v", err)
-}
+Feel free to open an issue with the tag `question` - we're here to help!
 
-// Extract a segment from 10s to 30s
-err = ffmpeg.Video.ExtractSegment("input.mp4", "segment.mp4", 10.0, 30.0, videoInfo)
-if err != nil {
-    log.Fatalf("Error extracting video segment: %v", err)
-}
-```
+---
 
-### Extract Audio Segment
+## 📄 License
 
-```go
-// Get audio info first to preserve quality settings
-audioInfo, err := ffmpeg.Audio.GetInfo("input.mp3")
-if err != nil {
-    log.Fatalf("Error getting audio info: %v", err)
-}
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-// Extract a segment from 10s to 30s
-err = ffmpeg.Audio.ExtractSegment("input.mp3", "segment.mp3", 10.0, 30.0, audioInfo)
-if err != nil {
-    log.Fatalf("Error extracting audio segment: %v", err)
-}
-```
+---
 
-### Concatenate Video Segments
+## 🙏 Acknowledgments
 
-```go
-segments := []string{
-    "segment1.mp4",
-    "segment2.mp4",
-    "segment3.mp4",
-}
+- Built with [FFmpeg](https://ffmpeg.org/) - the powerful multimedia framework
+- Inspired by the need for simple, beginner-friendly media processing in Go
+- Thanks to all our contributors! ❤️
 
-// Get video info to maintain quality settings
-videoInfo, err := ffmpeg.Video.GetInfo(segments[0])
-if err != nil {
-    log.Fatalf("Error getting video info: %v", err)
-}
+---
 
-err = ffmpeg.Video.ConcatenateSegments(segments, "output.mp4", videoInfo)
-if err != nil {
-    log.Fatalf("Error concatenating video segments: %v", err)
-}
-```
+## 📬 Contact
 
-### Concatenate Audio Segments
+- **Issues:** [GitHub Issues](https://github.com/meunomeebero/ffmpego/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/meunomeebero/ffmpego/discussions)
 
-```go
-segments := []string{
-    "segment1.mp3",
-    "segment2.mp3",
-    "segment3.mp3",
-}
+---
 
-// Get audio info to maintain quality settings
-audioInfo, err := ffmpeg.Audio.GetInfo(segments[0])
-if err != nil {
-    log.Fatalf("Error getting audio info: %v", err)
-}
+<div align="center">
 
-err = ffmpeg.Audio.ConcatenateSegments(segments, "output.mp3", audioInfo)
-if err != nil {
-    log.Fatalf("Error concatenating audio segments: %v", err)
-}
-```
+**Made with ❤️ for the Go community**
 
-## Main Structures
+If this project helped you, consider giving it a ⭐!
 
-### FFmpeg
-
-The main structure that provides access to the library's functionalities.
-
-```go
-type FFmpeg struct {
-    Audio *AudioProcessor
-    Video *VideoProcessor
-}
-```
-
-### VideoConfig
-
-Configuration settings for video processing.
-
-```go
-type VideoConfig struct {
-    TargetResolution string  // Format: "WIDTHxHEIGHT" (e.g., "1920x1080")
-    FrameRate        float64 // Target frame rate or 0 for original
-    VideoCodec       string  // Video codec or empty for default
-    AudioCodec       string  // Audio codec or empty for default
-    PreserveCodecs   bool    // Keep original codecs
-    CRF              int     // Constant Rate Factor (0-51, lower is better)
-    Preset           string  // Encoding preset (ultrafast...veryslow)
-    PixelFormat      string  // Pixel format or empty for default
-}
-```
-
-### AudioConfig
-
-Configuration settings for audio processing.
-
-```go
-type AudioConfig struct {
-    SampleRate int    // Sample rate in Hz or 0 for original
-    Channels   int    // Number of channels or 0 for original
-    Quality    int    // Quality (0-9, lower is better) or 0 for default
-    Codec      string // Audio codec or empty for default
-    BitRate    int    // Bit rate in kbps or 0 for default/variable
-}
-```
-
-### SilenceConfig
-
-Configuration settings for silence detection and removal.
-
-```go
-type SilenceConfig struct {
-    MinSilenceLen int // Minimum silence length in milliseconds
-    SilenceThresh int // Silence threshold in dB
-}
-```
-
-## License
-
-This project is licensed under the terms of the MIT license. 
+</div>
