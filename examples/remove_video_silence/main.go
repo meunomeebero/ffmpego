@@ -41,8 +41,8 @@ func main() {
 	// Step 2: Get non-silent segments
 	fmt.Println("Step 2: Getting non-silent segments...")
 	silenceConfig := video.SilenceConfig{
-		MinSilenceDuration: 700,  // 700ms minimum silence
-		SilenceThreshold:   -30,  // -30dB threshold
+		MinSilenceDuration: video.SilenceDurationMedium,    // 700ms - balanced
+		SilenceThreshold:   video.SilenceThresholdModerate, // -30dB - good for most videos
 	}
 
 	segments, err := v.GetNonSilentSegments(silenceConfig)

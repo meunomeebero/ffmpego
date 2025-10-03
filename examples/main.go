@@ -37,8 +37,8 @@ func main() {
 		log.Printf("Error: %v", err)
 	} else {
 		silenceConfig := video.SilenceConfig{
-			MinSilenceDuration: 700,
-			SilenceThreshold:   -30,
+			MinSilenceDuration: video.SilenceDurationMedium,
+			SilenceThreshold:   video.SilenceThresholdModerate,
 		}
 
 		segments, err := v.GetNonSilentSegments(silenceConfig)
@@ -145,8 +145,8 @@ func main() {
 		log.Printf("Error: %v", err)
 	} else {
 		silenceConfig := audio.SilenceConfig{
-			MinSilenceDuration: 500,
-			SilenceThreshold:   -40,
+			MinSilenceDuration: audio.SilenceDurationShort,
+			SilenceThreshold:   audio.SilenceThresholdStrict,
 		}
 
 		segments, err := a.GetNonSilentSegments(silenceConfig)
