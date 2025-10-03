@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 )
 
 // ConvertConfig contains configuration for video conversion
@@ -45,12 +44,12 @@ type ConvertConfig struct {
 type AspectRatio string
 
 const (
-	AspectRatio16x9  AspectRatio = "16:9"
-	AspectRatio9x16  AspectRatio = "9:16"
-	AspectRatio4x3   AspectRatio = "4:3"
-	AspectRatio1x1   AspectRatio = "1:1"
-	AspectRatio21x9  AspectRatio = "21:9"
-	AspectRatioAuto  AspectRatio = "auto"
+	AspectRatio16x9 AspectRatio = "16:9"
+	AspectRatio9x16 AspectRatio = "9:16"
+	AspectRatio4x3  AspectRatio = "4:3"
+	AspectRatio1x1  AspectRatio = "1:1"
+	AspectRatio21x9 AspectRatio = "21:9"
+	AspectRatioAuto AspectRatio = "auto"
 )
 
 // Common video codecs
@@ -284,20 +283,4 @@ func (c *ConvertConfig) needsReencoding(info *Info) bool {
 	}
 
 	return false
-}
-
-func parseResolution(resolution string) string {
-	parts := strings.Split(strings.ToLower(resolution), "x")
-	if len(parts) != 2 {
-		return resolution
-	}
-
-	width, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
-	height, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
-
-	if err1 != nil || err2 != nil {
-		return resolution
-	}
-
-	return fmt.Sprintf("%dx%d", width, height)
 }
