@@ -16,8 +16,8 @@ type SilenceConfig struct {
 	SilenceThreshold   int // Silence threshold in dB (e.g., -30)
 }
 
-// DetectSilence detects silent segments in the video and returns non-silent segments
-func (v *Video) DetectSilence(config SilenceConfig) ([]Segment, error) {
+// GetNonSilentSegments detects silent segments in the video and returns non-silent segments
+func (v *Video) GetNonSilentSegments(config SilenceConfig) ([]Segment, error) {
 	// First, extract audio from video
 	tempDir, err := os.MkdirTemp("", "video_silence_*")
 	if err != nil {

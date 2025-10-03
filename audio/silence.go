@@ -14,8 +14,8 @@ type SilenceConfig struct {
 	SilenceThreshold   int // Silence threshold in dB (e.g., -30)
 }
 
-// DetectSilence detects silent segments in the audio and returns non-silent segments
-func (a *Audio) DetectSilence(config SilenceConfig) ([]Segment, error) {
+// GetNonSilentSegments detects silent segments in the audio and returns non-silent segments
+func (a *Audio) GetNonSilentSegments(config SilenceConfig) ([]Segment, error) {
 	// Convert ms to seconds for FFmpeg
 	silenceLenSec := float64(config.MinSilenceDuration) / 1000.0
 

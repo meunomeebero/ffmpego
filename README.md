@@ -96,12 +96,12 @@ fmt.Printf("Resolution: %dx%d\n", info.Width, info.Height)
 fmt.Printf("Duration: %.2f seconds\n", info.Duration)
 fmt.Printf("Frame Rate: %.2f fps\n", info.FrameRate)
 
-// Detect silent parts (great for removing boring silence from videos!)
+// Get non-silent segments (great for removing boring silence from videos!)
 silenceConfig := video.SilenceConfig{
     MinSilenceDuration: 700,  // 700 milliseconds
     SilenceThreshold:   -30,  // -30 decibels
 }
-segments, _ := v.DetectSilence(silenceConfig)
+segments, _ := v.GetNonSilentSegments(silenceConfig)
 fmt.Printf("Found %d parts with audio\n", len(segments))
 
 // Extract a specific part (from 10 to 30 seconds)
@@ -134,12 +134,12 @@ fmt.Printf("Sample Rate: %d Hz\n", info.SampleRate)
 fmt.Printf("Channels: %d\n", info.Channels)
 fmt.Printf("Duration: %.2f seconds\n", info.Duration)
 
-// Detect silent parts
+// Get non-silent segments
 silenceConfig := audio.SilenceConfig{
     MinSilenceDuration: 500,  // 500ms
     SilenceThreshold:   -40,  // -40dB
 }
-segments, _ := a.DetectSilence(silenceConfig)
+segments, _ := a.GetNonSilentSegments(silenceConfig)
 
 // Extract a portion of the audio
 a.ExtractSegment("clip.mp3", 10.0, 30.0, nil)
@@ -207,7 +207,7 @@ fmt.Printf("Video is %dx%d\n", info.Width, info.Height)
 
 ---
 
-#### `v.DetectSilence(config SilenceConfig) ([]Segment, error)`
+#### `v.GetNonSilentSegments(config SilenceConfig) ([]Segment, error)`
 Finds all the parts of the video that have sound (non-silent segments).
 
 **Useful for:** Automatically removing silent parts from recordings, lectures, or podcasts.
@@ -218,7 +218,7 @@ config := video.SilenceConfig{
     MinSilenceDuration: 700,  // Silence must be at least 700ms
     SilenceThreshold:   -30,  // Volume below -30dB is considered silence
 }
-segments, _ := v.DetectSilence(config)
+segments, _ := v.GetNonSilentSegments(config)
 ```
 
 ---
@@ -282,8 +282,8 @@ Gets detailed information about the audio file.
 
 ---
 
-#### `a.DetectSilence(config SilenceConfig) ([]Segment, error)`
-Finds all the parts of the audio that have sound.
+#### `a.GetNonSilentSegments(config SilenceConfig) ([]Segment, error)`
+Finds all the parts of the audio that have sound (non-silent segments).
 
 ---
 
