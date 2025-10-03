@@ -5,7 +5,13 @@ import (
 	"os"
 )
 
-// Audio represents an audio file with fluent API
+// Audio represents an audio file with fluent API.
+//
+// Thread-safety: Audio instances are not thread-safe. Each instance should be
+// used by a single goroutine at a time. If you need to process the same audio
+// file concurrently, create separate Audio instances for each goroutine.
+// However, temporary files are uniquely named to prevent conflicts between
+// concurrent operations on different Audio instances.
 type Audio struct {
 	path string
 }

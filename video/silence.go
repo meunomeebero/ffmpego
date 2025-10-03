@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // SilenceConfig contains configuration for silence detection
@@ -20,8 +19,8 @@ type SilenceConfig struct {
 // DetectSilence detects silent segments in the video and returns non-silent segments
 func (v *Video) DetectSilence(config SilenceConfig) ([]Segment, error) {
 	// First, extract audio from video
-	tempDir := filepath.Join(os.TempDir(), "video_silence_"+time.Now().Format("20060102_150405"))
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
+	tempDir, err := os.MkdirTemp("", "video_silence_*")
+	if err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
 	defer os.RemoveAll(tempDir)
