@@ -8,14 +8,32 @@ import (
 	"strings"
 )
 
+// Common silence thresholds in dB (lower = more sensitive)
+const (
+	SilenceThresholdVeryStrict  = -50 // Detects even very quiet sounds as non-silence
+	SilenceThresholdStrict      = -40 // Detects most quiet sounds (recommended for audio)
+	SilenceThresholdModerate    = -30 // Balanced - good for most audio
+	SilenceThresholdRelaxed     = -20 // Only loud parts are considered non-silence
+	SilenceThresholdVeryRelaxed = -10 // Only very loud parts are considered non-silence
+)
+
+// Common minimum silence durations in milliseconds
+const (
+	SilenceDurationVeryShort = 200  // 0.2 seconds - very sensitive
+	SilenceDurationShort     = 500  // 0.5 seconds - sensitive (recommended for audio)
+	SilenceDurationMedium    = 700  // 0.7 seconds - balanced
+	SilenceDurationLong      = 1000 // 1 second - less sensitive
+	SilenceDurationVeryLong  = 2000 // 2 seconds - very conservative
+)
+
 // SilenceConfig contains configuration for silence detection
 type SilenceConfig struct {
-	MinSilenceDuration int // Minimum silence duration in milliseconds
-	SilenceThreshold   int // Silence threshold in dB (e.g., -30)
+	MinSilenceDuration int // Minimum silence duration in milliseconds (use SilenceDuration constants)
+	SilenceThreshold   int // Silence threshold in dB (use SilenceThreshold constants)
 }
 
-// DetectSilence detects silent segments in the audio and returns non-silent segments
-func (a *Audio) DetectSilence(config SilenceConfig) ([]Segment, error) {
+// GetNonSilentSegments detects silent segments in the audio and returns non-silent segments
+func (a *Audio) GetNonSilentSegments(config SilenceConfig) ([]Segment, error) {
 	// Convert ms to seconds for FFmpeg
 	silenceLenSec := float64(config.MinSilenceDuration) / 1000.0
 

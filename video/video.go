@@ -5,7 +5,13 @@ import (
 	"os"
 )
 
-// Video represents a video file with fluent API
+// Video represents a video file with fluent API.
+//
+// Thread-safety: Video instances are not thread-safe. Each instance should be
+// used by a single goroutine at a time. If you need to process the same video
+// file concurrently, create separate Video instances for each goroutine.
+// However, temporary files are uniquely named to prevent conflicts between
+// concurrent operations on different Video instances.
 type Video struct {
 	path string
 }

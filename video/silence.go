@@ -8,20 +8,37 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
+)
+
+// Common silence thresholds in dB (lower = more sensitive)
+const (
+	SilenceThresholdVeryStrict  = -50 // Detects even very quiet sounds as non-silence
+	SilenceThresholdStrict      = -40 // Detects most quiet sounds
+	SilenceThresholdModerate    = -30 // Balanced - good for most videos (recommended)
+	SilenceThresholdRelaxed     = -20 // Only loud parts are considered non-silence
+	SilenceThresholdVeryRelaxed = -10 // Only very loud parts are considered non-silence
+)
+
+// Common minimum silence durations in milliseconds
+const (
+	SilenceDurationVeryShort = 200  // 0.2 seconds - very sensitive
+	SilenceDurationShort     = 500  // 0.5 seconds - sensitive
+	SilenceDurationMedium    = 700  // 0.7 seconds - balanced (recommended)
+	SilenceDurationLong      = 1000 // 1 second - less sensitive
+	SilenceDurationVeryLong  = 2000 // 2 seconds - very conservative
 )
 
 // SilenceConfig contains configuration for silence detection
 type SilenceConfig struct {
-	MinSilenceDuration int // Minimum silence duration in milliseconds
-	SilenceThreshold   int // Silence threshold in dB (e.g., -30)
+	MinSilenceDuration int // Minimum silence duration in milliseconds (use SilenceDuration constants)
+	SilenceThreshold   int // Silence threshold in dB (use SilenceThreshold constants)
 }
 
-// DetectSilence detects silent segments in the video and returns non-silent segments
-func (v *Video) DetectSilence(config SilenceConfig) ([]Segment, error) {
+// GetNonSilentSegments detects silent segments in the video and returns non-silent segments
+func (v *Video) GetNonSilentSegments(config SilenceConfig) ([]Segment, error) {
 	// First, extract audio from video
-	tempDir := filepath.Join(os.TempDir(), "video_silence_"+time.Now().Format("20060102_150405"))
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
+	tempDir, err := os.MkdirTemp("", "video_silence_*")
+	if err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
 	defer os.RemoveAll(tempDir)

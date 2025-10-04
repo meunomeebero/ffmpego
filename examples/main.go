@@ -10,7 +10,7 @@ import (
 
 func main() {
 	// ==========================================
-	// Exemplo 1: Obter informações de um vídeo
+	// Example 1: Get video information
 	// ==========================================
 	fmt.Println("=== Example 1: Get Video Info ===")
 
@@ -28,22 +28,22 @@ func main() {
 	}
 
 	// ==========================================
-	// Exemplo 2: Detectar silêncio e extrair segmentos
+	// Example 2: Get non-silent segments
 	// ==========================================
-	fmt.Println("\n=== Example 2: Detect Silence and Extract Segments ===")
+	fmt.Println("\n=== Example 2: Get Non-Silent Segments ===")
 
 	v, err = video.New("input.mp4")
 	if err != nil {
 		log.Printf("Error: %v", err)
 	} else {
 		silenceConfig := video.SilenceConfig{
-			MinSilenceDuration: 700,
-			SilenceThreshold:   -30,
+			MinSilenceDuration: video.SilenceDurationMedium,
+			SilenceThreshold:   video.SilenceThresholdModerate,
 		}
 
-		segments, err := v.DetectSilence(silenceConfig)
+		segments, err := v.GetNonSilentSegments(silenceConfig)
 		if err != nil {
-			log.Printf("Error detecting silence: %v", err)
+			log.Printf("Error getting non-silent segments: %v", err)
 		} else {
 			fmt.Printf("Found %d non-silent segments:\n", len(segments))
 			for i, seg := range segments {
@@ -51,7 +51,7 @@ func main() {
 					i+1, seg.StartTime, seg.EndTime, seg.Duration)
 			}
 
-			// Extrair o primeiro segmento
+			// Extract the first segment
 			if len(segments) > 0 {
 				err = v.ExtractSegment("segment_001.mp4",
 					segments[0].StartTime,
@@ -67,7 +67,7 @@ func main() {
 	}
 
 	// ==========================================
-	// Exemplo 3: Converter vídeo para 16:9 em HD
+	// Example 3: Convert video to 16:9 HD
 	// ==========================================
 	fmt.Println("\n=== Example 3: Convert Video to 16:9 HD ===")
 
@@ -81,7 +81,7 @@ func main() {
 			FrameRate:   30,
 			VideoCodec:  video.CodecH264,
 			AudioCodec:  video.CodecAAC,
-			Quality:     23, // Boa qualidade
+			Quality:     23, // Good quality
 			Preset:      video.PresetMedium,
 		}
 
@@ -94,7 +94,7 @@ func main() {
 	}
 
 	// ==========================================
-	// Exemplo 4: Converter vídeo para formato vertical (9:16)
+	// Example 4: Convert video to vertical format (9:16)
 	// ==========================================
 	fmt.Println("\n=== Example 4: Convert Video to Vertical Format (9:16) ===")
 
@@ -118,7 +118,7 @@ func main() {
 	}
 
 	// ==========================================
-	// Exemplo 5: Obter informações de um áudio
+	// Example 5: Get audio information
 	// ==========================================
 	fmt.Println("\n=== Example 5: Get Audio Info ===")
 
@@ -136,22 +136,22 @@ func main() {
 	}
 
 	// ==========================================
-	// Exemplo 6: Detectar silêncio no áudio
+	// Example 6: Get non-silent segments in audio
 	// ==========================================
-	fmt.Println("\n=== Example 6: Detect Silence in Audio ===")
+	fmt.Println("\n=== Example 6: Get Non-Silent Segments in Audio ===")
 
 	a, err = audio.New("audio.mp3")
 	if err != nil {
 		log.Printf("Error: %v", err)
 	} else {
 		silenceConfig := audio.SilenceConfig{
-			MinSilenceDuration: 500,
-			SilenceThreshold:   -40,
+			MinSilenceDuration: audio.SilenceDurationShort,
+			SilenceThreshold:   audio.SilenceThresholdStrict,
 		}
 
-		segments, err := a.DetectSilence(silenceConfig)
+		segments, err := a.GetNonSilentSegments(silenceConfig)
 		if err != nil {
-			log.Printf("Error detecting silence: %v", err)
+			log.Printf("Error getting non-silent segments: %v", err)
 		} else {
 			fmt.Printf("Found %d non-silent audio segments:\n", len(segments))
 			for i, seg := range segments {
@@ -162,7 +162,7 @@ func main() {
 	}
 
 	// ==========================================
-	// Exemplo 7: Converter áudio para alta qualidade
+	// Example 7: Convert audio to high quality
 	// ==========================================
 	fmt.Println("\n=== Example 7: Convert Audio to High Quality ===")
 
@@ -174,7 +174,7 @@ func main() {
 			SampleRate: audio.SampleRate48000,
 			Channels:   2, // Stereo
 			Codec:      audio.CodecAAC,
-			Quality:    2, // Alta qualidade
+			Quality:    2, // High quality
 			Bitrate:    320,
 		}
 
@@ -187,7 +187,7 @@ func main() {
 	}
 
 	// ==========================================
-	// Exemplo 8: Extrair segmento de áudio
+	// Example 8: Extract audio segment
 	// ==========================================
 	fmt.Println("\n=== Example 8: Extract Audio Segment ===")
 
@@ -195,7 +195,7 @@ func main() {
 	if err != nil {
 		log.Printf("Error: %v", err)
 	} else {
-		// Extrair dos 10s aos 30s
+		// Extract from 10s to 30s
 		err = a.ExtractSegment("audio_segment.mp3", 10.0, 30.0, nil)
 		if err != nil {
 			log.Printf("Error extracting audio segment: %v", err)
@@ -205,7 +205,7 @@ func main() {
 	}
 
 	// ==========================================
-	// Exemplo 9: Concatenar segmentos de vídeo
+	// Example 9: Concatenate video segments
 	// ==========================================
 	fmt.Println("\n=== Example 9: Concatenate Video Segments ===")
 
@@ -223,7 +223,7 @@ func main() {
 	}
 
 	// ==========================================
-	// Exemplo 10: Concatenar segmentos de áudio
+	// Example 10: Concatenate audio segments
 	// ==========================================
 	fmt.Println("\n=== Example 10: Concatenate Audio Segments ===")
 

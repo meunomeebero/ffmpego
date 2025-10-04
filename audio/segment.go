@@ -74,13 +74,11 @@ func ConcatenateSegments(segmentPaths []string, outputPath string, config *Conve
 	}
 
 	// Create temporary file list
-	tempDir := os.TempDir()
-	fileListPath := filepath.Join(tempDir, "audio_segments_list.txt")
-
-	fileList, err := os.Create(fileListPath)
+	fileList, err := os.CreateTemp("", "audio_segments_list_*.txt")
 	if err != nil {
 		return fmt.Errorf("failed to create file list: %w", err)
 	}
+	fileListPath := fileList.Name()
 	defer os.Remove(fileListPath)
 
 	// Write segment paths to file list
