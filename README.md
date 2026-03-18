@@ -12,6 +12,7 @@ FFmpego makes video and audio processing simple and intuitive. You don't need to
 
 ## Features
 
+- **CLI Tool** - `ffmpego -rs input.mp4 output.mp4` from anywhere
 - **Silence Removal** - Automatically cut silent parts from videos and audio
 - **Video Processing** - Get info, convert formats, extract segments
 - **Audio Processing** - Manipulate audio files with ease
@@ -25,7 +26,18 @@ FFmpego makes video and audio processing simple and intuitive. You don't need to
 
 ## Quick Start
 
-Remove silence from a video in 4 lines:
+### CLI (use from anywhere)
+
+```bash
+go install github.com/meunomeebero/ffmpego/cmd/ffmpego@latest
+
+ffmpego -rs recording.mp4 clean.mp4
+ffmpego -rs podcast.mp3 clean.mp3
+```
+
+That's it — removes silence, preserves original quality, works with video and audio.
+
+### As a Go library
 
 ```go
 v, err := video.New("my-video.mp4")
@@ -39,7 +51,7 @@ if err != nil {
 }
 ```
 
-That's it — no need to configure anything. Sensible defaults are applied automatically.
+No need to configure anything. Sensible defaults are applied automatically.
 
 ---
 
