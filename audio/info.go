@@ -3,7 +3,6 @@ package audio
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -18,55 +17,42 @@ type Info struct {
 	FileSizeBytes int64
 }
 
-// GetInfo retrieves information about the audio file
+// GetInfo retrieves information about the audio file.
+// Results are cached — subsequent calls return the cached value without invoking ffprobe.
 func (a *Audio) GetInfo() (*Info, error) {
-	// Check if FFprobe is available
-	_, err := exec.LookPath("ffprobe")
-	if err != nil {
-		return nil, fmt.Errorf("ffprobe not found in PATH: %w", err)
+	if a.info != nil {
+		copy := *a.info
+		return &copy, nil
 	}
 
-	// Get audio stream information
-	cmd := exec.Command("ffprobe",
-		"-v", "error",
-		"-select_streams", "a:0",
-		"-show_entries", "stream=sample_rate,channels,codec_name,bit_rate",
-		"-show_entries", "format=duration",
-		"-of", "default=noprint_wrappers=1",
-		a.path)
-
-	output, err := cmd.Output()
+	output, err := ffprobeAudio(a.path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get audio info: %w", err)
 	}
 
-	// Parse output
 	info := &Info{}
 	lines := strings.Split(string(output), "\n")
 
 	for _, line := range lines {
 		if strings.HasPrefix(line, "sample_rate=") {
-			sampleRateStr := strings.TrimPrefix(line, "sample_rate=")
-			info.SampleRate, _ = strconv.Atoi(sampleRateStr)
+			info.SampleRate, _ = strconv.Atoi(strings.TrimPrefix(line, "sample_rate="))
 		} else if strings.HasPrefix(line, "channels=") {
-			channelsStr := strings.TrimPrefix(line, "channels=")
-			info.Channels, _ = strconv.Atoi(channelsStr)
+			info.Channels, _ = strconv.Atoi(strings.TrimPrefix(line, "channels="))
 		} else if strings.HasPrefix(line, "codec_name=") {
 			info.Codec = strings.TrimPrefix(line, "codec_name=")
 		} else if strings.HasPrefix(line, "bit_rate=") {
-			bitRateStr := strings.TrimPrefix(line, "bit_rate=")
-			info.BitRate, _ = strconv.Atoi(bitRateStr)
+			info.BitRate, _ = strconv.Atoi(strings.TrimPrefix(line, "bit_rate="))
 		} else if strings.HasPrefix(line, "duration=") {
-			durStr := strings.TrimPrefix(line, "duration=")
-			info.Duration, _ = strconv.ParseFloat(durStr, 64)
+			info.Duration, _ = strconv.ParseFloat(strings.TrimPrefix(line, "duration="), 64)
 		}
 	}
 
-	// Add file size information
 	fileInfo, err := os.Stat(a.path)
 	if err == nil {
 		info.FileSizeBytes = fileInfo.Size()
 	}
 
-	return info, nil
+	a.info = info
+	copy := *info
+	return &copy, nil
 }

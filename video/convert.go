@@ -85,91 +85,71 @@ const (
 
 // Convert converts the video according to the configuration
 func (v *Video) Convert(outputPath string, config ConvertConfig) error {
-	// Get video info
 	info, err := v.GetInfo()
 	if err != nil {
 		return fmt.Errorf("failed to get video info: %w", err)
 	}
 
-	// Ensure output directory exists
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Build FFmpeg command
 	args := []string{"-i", v.path}
-
-	// Add conversion arguments
 	args = append(args, buildConvertArgs(info, &config)...)
-
-	// Add output path
 	args = append(args, "-y", outputPath)
 
-	// Execute FFmpeg command
 	cmd := exec.Command("ffmpeg", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("FFmpeg error: %w - %s", err, string(output))
 	}
-
 	return nil
 }
-
-// Helper functions
 
 func buildConvertArgs(info *Info, config *ConvertConfig) []string {
 	var args []string
 
-	// Handle resolution and aspect ratio
 	if config.Resolution != "" {
 		args = append(args, "-s", config.Resolution)
 	} else if config.AspectRatio != "" && config.AspectRatio != AspectRatioAuto {
-		// Calculate resolution based on aspect ratio
 		resolution := calculateResolutionFromAspectRatio(info, config.AspectRatio)
 		if resolution != "" {
 			args = append(args, "-s", resolution)
 		}
 	}
 
-	// Frame rate
 	if config.FrameRate > 0 {
 		args = append(args, "-r", fmt.Sprintf("%.3f", config.FrameRate))
 	}
 
-	// Video codec
 	videoCodec := config.VideoCodec
 	if videoCodec == "" {
-		videoCodec = CodecH264 // Default
+		videoCodec = CodecH264
 	}
 	args = append(args, "-c:v", videoCodec)
 
-	// Audio codec
 	audioCodec := config.AudioCodec
 	if audioCodec == "" {
-		audioCodec = CodecAAC // Default
+		audioCodec = CodecAAC
 	}
 	args = append(args, "-c:a", audioCodec)
 
-	// Quality (CRF)
 	quality := config.Quality
 	if quality == 0 {
-		quality = 23 // Default medium quality
+		quality = 23
 	}
 	args = append(args, "-crf", strconv.Itoa(quality))
 
-	// Preset
 	preset := config.Preset
 	if preset == "" {
-		preset = PresetMedium // Default
+		preset = PresetMedium
 	}
 	args = append(args, "-preset", preset)
 
-	// Pixel format
 	if config.PixelFormat != "" {
 		args = append(args, "-pix_fmt", config.PixelFormat)
 	}
 
-	// Bitrate
 	if config.Bitrate > 0 {
 		args = append(args, "-b:v", fmt.Sprintf("%dk", config.Bitrate))
 	}
@@ -177,36 +157,9 @@ func buildConvertArgs(info *Info, config *ConvertConfig) []string {
 	return args
 }
 
-func buildDefaultArgs(info *Info) []string {
-	var args []string
-
-	// Preserve codecs
-	if info.VideoCodec != "" {
-		args = append(args, "-c:v", info.VideoCodec)
-	}
-	if info.AudioCodec != "" {
-		args = append(args, "-c:a", info.AudioCodec)
-	}
-
-	// Preserve frame rate
-	if info.FrameRate > 0 {
-		args = append(args, "-r", fmt.Sprintf("%.3f", info.FrameRate))
-	}
-
-	// Preserve resolution
-	if info.Width > 0 && info.Height > 0 {
-		args = append(args, "-s", fmt.Sprintf("%dx%d", info.Width, info.Height))
-	}
-
-	// Preserve pixel format
-	if info.PixelFormat != "" {
-		args = append(args, "-pix_fmt", info.PixelFormat)
-	}
-
-	// High quality settings
-	args = append(args, "-crf", "18", "-preset", "medium")
-
-	return args
+// roundEven rounds n to the nearest even number (required by most video codecs).
+func roundEven(n int) int {
+	return (n + 1) &^ 1
 }
 
 func calculateResolutionFromAspectRatio(info *Info, aspectRatio AspectRatio) string {
@@ -216,71 +169,76 @@ func calculateResolutionFromAspectRatio(info *Info, aspectRatio AspectRatio) str
 
 	switch aspectRatio {
 	case AspectRatio16x9:
-		// Keep height, calculate width for 16:9
-		width := (info.Height * 16) / 9
-		return fmt.Sprintf("%dx%d", width, info.Height)
-
+		width := roundEven((info.Height * 16) / 9)
+		return fmt.Sprintf("%dx%d", width, roundEven(info.Height))
 	case AspectRatio9x16:
-		// Keep width, calculate height for 9:16 (vertical)
-		height := (info.Width * 16) / 9
-		return fmt.Sprintf("%dx%d", info.Width, height)
-
+		height := roundEven((info.Width * 16) / 9)
+		return fmt.Sprintf("%dx%d", roundEven(info.Width), height)
 	case AspectRatio4x3:
-		// Keep height, calculate width for 4:3
-		width := (info.Height * 4) / 3
-		return fmt.Sprintf("%dx%d", width, info.Height)
-
+		width := roundEven((info.Height * 4) / 3)
+		return fmt.Sprintf("%dx%d", width, roundEven(info.Height))
 	case AspectRatio1x1:
-		// Square - use the smaller dimension
 		size := info.Width
 		if info.Height < info.Width {
 			size = info.Height
 		}
+		size = roundEven(size)
 		return fmt.Sprintf("%dx%d", size, size)
-
 	case AspectRatio21x9:
-		// Ultra-wide - keep height, calculate width for 21:9
-		width := (info.Height * 21) / 9
-		return fmt.Sprintf("%dx%d", width, info.Height)
-
+		width := roundEven((info.Height * 21) / 9)
+		return fmt.Sprintf("%dx%d", width, roundEven(info.Height))
 	default:
 		return ""
 	}
+}
+
+// decoderToEncoder maps ffprobe decoder names to ffmpeg encoder names.
+var decoderToEncoder = map[string]string{
+	"h264":       CodecH264,
+	"hevc":       CodecH265,
+	"h265":       CodecH265,
+	"vp9":        CodecVP9,
+	"av1":        CodecAV1,
+	"prores":     CodecProRes,
+	"aac":        CodecAAC,
+	"mp3":        CodecMP3,
+	"flac":       CodecFLAC,
+	"opus":       CodecOpus,
+	"vorbis":     CodecVorbis,
+}
+
+// encoderForDecoder returns the ffmpeg encoder name for an ffprobe decoder name.
+func encoderForDecoder(decoder string) string {
+	if enc, ok := decoderToEncoder[decoder]; ok {
+		return enc
+	}
+	return decoder
 }
 
 func (c *ConvertConfig) needsReencoding(info *Info) bool {
 	if c == nil {
 		return false
 	}
-
-	// Check if any parameter requires re-encoding
 	if c.Resolution != "" && c.Resolution != fmt.Sprintf("%dx%d", info.Width, info.Height) {
 		return true
 	}
-
 	if c.AspectRatio != "" && c.AspectRatio != AspectRatioAuto {
 		return true
 	}
-
 	if c.FrameRate > 0 && c.FrameRate != info.FrameRate {
 		return true
 	}
-
-	if c.VideoCodec != "" && c.VideoCodec != info.VideoCodec {
+	if c.VideoCodec != "" && c.VideoCodec != encoderForDecoder(info.VideoCodec) {
 		return true
 	}
-
-	if c.AudioCodec != "" && c.AudioCodec != info.AudioCodec {
+	if c.AudioCodec != "" && c.AudioCodec != encoderForDecoder(info.AudioCodec) {
 		return true
 	}
-
 	if c.PixelFormat != "" && c.PixelFormat != info.PixelFormat {
 		return true
 	}
-
 	if c.Bitrate > 0 {
 		return true
 	}
-
 	return false
 }

@@ -3,6 +3,8 @@ package video
 import (
 	"fmt"
 	"os"
+
+	"github.com/meunomeebero/ffmpego/internal/ffutil"
 )
 
 // Video represents a video file with fluent API.
@@ -14,12 +16,17 @@ import (
 // concurrent operations on different Video instances.
 type Video struct {
 	path string
+	info *Info
 }
 
-// New creates a new Video instance from a file path
+// New creates a new Video instance from a file path.
+// Returns an error if ffmpeg/ffprobe are not installed or the file does not exist.
 func New(path string) (*Video, error) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, fmt.Errorf("video file does not exist: %s", path)
+	if err := ffutil.CheckDependencies(); err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("video file not accessible: %s: %w", path, err)
 	}
 	return &Video{path: path}, nil
 }
