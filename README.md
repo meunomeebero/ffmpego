@@ -2,7 +2,8 @@
 
 > A friendly, easy-to-use Go library for working with video and audio files powered by FFmpeg
 
-[![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.20-blue)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.22-blue)](https://go.dev/)
+[![Tests](https://github.com/meunomeebero/ffmpego/actions/workflows/test.yml/badge.svg)](https://github.com/meunomeebero/ffmpego/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 FFmpego makes video and audio processing simple and intuitive. You don't need to know about codecs, bitrates, or encoding — just tell it what you want and it handles the rest.
@@ -334,7 +335,11 @@ Contributions are welcome from developers of all skill levels!
 - Write simple, clear code that beginners can understand
 - Follow Go formatting (`gofmt`)
 - Keep functions small and focused
-- Add tests for new logic (`go test ./...`)
+- Add tests for new logic — the CI runs 78 tests with race detection on every PR
+
+```bash
+go test ./... -race
+```
 
 ---
 
