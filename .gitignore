@@ -1,0 +1,16 @@
+# Media files (test fixtures are generated via ffmpeg)
+*.mp4
+*.mp3
+*.wav
+*.flac
+*.m4a
+*.ogg
+*.mkv
+*.avi
+*.mov
+
+# OS
+.DS_Store
+
+# Temp
+tmp/
