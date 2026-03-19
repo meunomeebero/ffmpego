@@ -12,5 +12,8 @@
 # OS
 .DS_Store
 
+# Binaries
+/ffmpego
+
 # Temp
 tmp/
