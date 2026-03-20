@@ -20,7 +20,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Run tests
-        run: go test ./... -race -count=1
+        run: go test -p 1 ./... -race -count=1
 
       - name: Vet
         run: go vet ./...

@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 )
 
 func tempDirNames(t *testing.T, prefix string) map[string]struct{} {
@@ -130,13 +129,9 @@ func TestRemoveSilence_ShortFile(t *testing.T) {
 }
 
 func TestRemoveSilence_TempFilesCleanedUp(t *testing.T) {
-	t.Parallel()
-
+	// NOT parallel — runs after all parallel tests complete, so no
+	// other test is creating ffmpego_silence_* dirs concurrently.
 	const prefix = "ffmpego_silence_"
-
-	// Snapshot before the call. We'll verify that any dir created and
-	// finished by this specific call is gone (defer-based cleanup is
-	// synchronous, so the dir must be absent when RemoveSilence returns).
 	before := tempDirNames(t, prefix)
 
 	a, err := New(fixture("silence-middle.wav"))
@@ -153,29 +148,10 @@ func TestRemoveSilence_TempFilesCleanedUp(t *testing.T) {
 		t.Fatalf("RemoveSilence: %v", err)
 	}
 
-	// Wait briefly for any other parallel tests that may have created dirs
-	// in the same window to also complete their deferred cleanup.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		after := tempDirNames(t, prefix)
-		leak := false
-		for name := range after {
-			if _, existed := before[name]; !existed {
-				leak = true
-				break
-			}
-		}
-		if !leak {
-			return // all good
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	// Final check after waiting.
 	after := tempDirNames(t, prefix)
 	for name := range after {
 		if _, existed := before[name]; !existed {
-			t.Errorf("temp dir %q was created but not cleaned up after waiting", name)
+			t.Errorf("temp dir %q was not cleaned up", name)
 		}
 	}
 }
@@ -314,8 +290,8 @@ func TestParallel_RemoveSilence_Concurrent(t *testing.T) {
 }
 
 func TestParallel_TempFilesIsolated(t *testing.T) {
-	t.Parallel()
-
+	// NOT parallel — runs after all parallel tests complete, so the
+	// snapshot/diff approach works without false positives from sibling tests.
 	const prefix = "ffmpego_silence_"
 	before := tempDirNames(t, prefix)
 
@@ -323,7 +299,6 @@ func TestParallel_TempFilesIsolated(t *testing.T) {
 	const n = 3
 
 	var wg sync.WaitGroup
-
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
@@ -336,33 +311,12 @@ func TestParallel_TempFilesIsolated(t *testing.T) {
 			_ = a.RemoveSilence(outputPath, config)
 		}()
 	}
-
 	wg.Wait()
 
-	// All 3 operations have returned; their deferred cleanup is synchronous.
-	// Wait briefly for any sibling parallel tests that may overlap to also
-	// complete their own deferred cleanup.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		after := tempDirNames(t, prefix)
-		leak := false
-		for name := range after {
-			if _, existed := before[name]; !existed {
-				leak = true
-				break
-			}
-		}
-		if !leak {
-			return // no orphaned dirs
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	// Final check.
 	after := tempDirNames(t, prefix)
 	for name := range after {
 		if _, existed := before[name]; !existed {
-			t.Errorf("orphaned temp dir %q: persisted after all operations completed", name)
+			t.Errorf("orphaned temp dir %q after concurrent operations", name)
 		}
 	}
 }

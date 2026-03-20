@@ -1,10 +1,10 @@
 package video
 
 import (
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 )
 
 // RemoveSilence tests
@@ -111,12 +111,9 @@ func TestRemoveSilence_ShortFile(t *testing.T) {
 }
 
 func TestRemoveSilence_TempFilesCleanedUp(t *testing.T) {
-	t.Parallel()
-
+	// NOT parallel — runs after all parallel tests complete, so no
+	// other test is creating ffmpego_silence_* dirs concurrently.
 	const prefix = "ffmpego_silence_"
-
-	// Snapshot before the call. Deferred cleanup in RemoveSilence is
-	// synchronous, so any dir it created must be gone on return.
 	before := countTempDirs(t, prefix)
 
 	v, err := New(fixture("silence-middle.mp4"))
@@ -133,29 +130,10 @@ func TestRemoveSilence_TempFilesCleanedUp(t *testing.T) {
 		t.Fatalf("RemoveSilence: %v", err)
 	}
 
-	// Wait briefly for any sibling parallel tests that may have overlapped
-	// to also complete their own deferred cleanup.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		after := countTempDirs(t, prefix)
-		leak := false
-		for name := range after {
-			if _, existed := before[name]; !existed {
-				leak = true
-				break
-			}
-		}
-		if !leak {
-			return // all cleaned up
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	// Final check after waiting.
 	after := countTempDirs(t, prefix)
 	for name := range after {
 		if _, existed := before[name]; !existed {
-			t.Errorf("orphaned temp dir found after RemoveSilence: %s", name)
+			t.Errorf("temp dir %q was not cleaned up", name)
 		}
 	}
 }
@@ -318,14 +296,12 @@ func TestParallel_RemoveSilence_Concurrent(t *testing.T) {
 }
 
 func TestParallel_TempFilesIsolated(t *testing.T) {
-	t.Parallel()
-
+	// NOT parallel — runs after all parallel tests complete, so the
+	// snapshot/diff approach works without false positives from sibling tests.
 	const prefix = "ffmpego_silence_"
 	before := countTempDirs(t, prefix)
 
-	tmpDir := t.TempDir()
 	config := SilenceConfig{}
-
 	var wg sync.WaitGroup
 	errs := make([]error, 3)
 
@@ -345,7 +321,7 @@ func TestParallel_TempFilesIsolated(t *testing.T) {
 				errs[i] = err
 				return
 			}
-			out := filepath.Join(tmpDir, "out"+string(rune('0'+i))+".mp4")
+			out := filepath.Join(t.TempDir(), fmt.Sprintf("out%d.mp4", i))
 			errs[i] = v.RemoveSilence(out, config)
 		}()
 	}
@@ -357,30 +333,10 @@ func TestParallel_TempFilesIsolated(t *testing.T) {
 		}
 	}
 
-	// All 3 operations have returned; their deferred cleanup is synchronous.
-	// Wait briefly for any sibling parallel tests that may overlap to also
-	// complete their own deferred cleanup.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		after := countTempDirs(t, prefix)
-		leak := false
-		for name := range after {
-			if _, existed := before[name]; !existed {
-				leak = true
-				break
-			}
-		}
-		if !leak {
-			return // no orphaned dirs
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	// Final check after waiting.
 	after := countTempDirs(t, prefix)
 	for name := range after {
 		if _, existed := before[name]; !existed {
-			t.Errorf("orphaned temp dir found after concurrent RemoveSilence: %s", name)
+			t.Errorf("orphaned temp dir %q after concurrent operations", name)
 		}
 	}
 }
